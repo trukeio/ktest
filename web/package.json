@@ -1,0 +1,20 @@
+{
+  "name": "ktest-rack",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The ktestd rack, the browser UI. Built output is committed to dist/ and embedded in ktestd, so building this is not required to run it.",
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit && vite build",
+    "test": "node --test test/"
+  },
+  "dependencies": {
+    "gridstack": "^13.3.0",
+    "lit": "^3.2.0",
+    "uplot": "^1.6.32"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0",
+    "vite": "^6.4.3"
+  }
+}

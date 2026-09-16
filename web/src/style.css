@@ -1,0 +1,461 @@
+:root {
+  color-scheme: dark;
+  --bg: #12161d;
+  --panel: #1a2029;
+  --line: #2a3140;
+  --text: #d8dee9;
+  --dim: #8b95a5;
+  --live: #59a14f;
+  --warn: #edc948;
+  --bad: #e15759;
+  font: 14px/1.4 system-ui, sans-serif;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--line);
+}
+header .name {
+  font-weight: 600;
+}
+header .status {
+  flex: 1;
+  color: var(--dim);
+  font-size: 12px;
+}
+header .status.live::before,
+header .status.connecting::before,
+header .status.error::before,
+header .status.ended::before {
+  content: "●";
+  margin-right: 6px;
+}
+header .status.live::before {
+  color: var(--live);
+}
+header .status.connecting::before,
+header .status.ended::before {
+  color: var(--warn);
+}
+header .status.error::before {
+  color: var(--bad);
+}
+
+button {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+/* The rack is a gridstack grid, the same one shown and edited. Rows are 72 px
+   with 4 px of margin round every widget: 64 px widgets 8 px apart. */
+.workspace {
+  display: flex;
+  align-items: flex-start;
+}
+.grid-host {
+  flex: 1;
+  min-width: 0;
+  padding: 12px;
+}
+.grid-stack > .grid-stack-item > .grid-stack-item-content {
+  display: flex;
+  overflow: hidden;
+}
+.grid-stack-item-content > .widget {
+  flex: 1;
+  min-width: 0;
+}
+.grid-stack-item-content > .remove {
+  display: none;
+}
+
+.editing .grid-stack {
+  min-height: 400px;
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+  background-size: var(--gs-column-width) 72px;
+}
+/* While editing a widget is moved, not used: its controls do not take clicks. */
+.editing .grid-stack-item-content > .widget {
+  pointer-events: none;
+}
+.editing .grid-stack-item-content {
+  cursor: move;
+}
+.editing .grid-stack-item-content > .remove {
+  display: block;
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 0 6px;
+  font-size: 12px;
+  line-height: 18px;
+}
+.grid-stack-item.selected .widget {
+  border-color: var(--warn);
+  box-shadow: 0 0 0 1px var(--warn);
+}
+.grid-stack-placeholder > .placeholder-content {
+  background: rgba(237, 201, 72, 0.08) !important;
+  border: 1px dashed var(--warn);
+  border-radius: 6px;
+}
+header .mode {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+ktest-editor {
+  flex: none;
+  width: 300px;
+  box-sizing: border-box;
+  position: sticky;
+  top: 0;
+  max-height: 100vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px;
+  border-left: 1px solid var(--line);
+  background: var(--panel);
+}
+ktest-editor h2 {
+  font-size: 15px;
+  margin: 0;
+}
+ktest-editor p {
+  margin: 0;
+}
+ktest-editor .dim,
+ktest-editor .hint {
+  color: var(--dim);
+  font-size: 12px;
+}
+ktest-editor label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: var(--dim);
+  font-size: 12px;
+}
+ktest-editor input {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 4px 6px;
+  font: inherit;
+  font-size: 13px;
+}
+ktest-editor fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px 10px;
+  margin: 0;
+}
+ktest-editor legend {
+  color: var(--text);
+  padding: 0 4px;
+}
+ktest-editor .row {
+  display: flex;
+  gap: 6px;
+}
+ktest-editor .row input {
+  flex: 1;
+  min-width: 0;
+}
+ktest-editor .add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+ktest-editor .add span {
+  color: var(--dim);
+  font-size: 12px;
+}
+ktest-editor .warn,
+ktest-editor .problems {
+  color: var(--warn);
+  font-size: 12px;
+}
+ktest-editor .problems {
+  margin: 0;
+  padding-left: 18px;
+}
+ktest-editor .problems a {
+  color: inherit;
+}
+ktest-editor .msg {
+  font-size: 12px;
+}
+ktest-editor .msg.bad {
+  color: var(--bad);
+}
+ktest-editor .actions {
+  display: flex;
+  gap: 8px;
+}
+button.primary {
+  background: var(--live);
+  border-color: var(--live);
+  color: #fff;
+}
+button.danger {
+  color: var(--bad);
+  align-self: flex-start;
+}
+@media (max-width: 800px) {
+  .workspace {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  ktest-editor {
+    width: auto;
+    position: static;
+    max-height: none;
+    border-left: none;
+    border-top: 1px solid var(--line);
+  }
+}
+
+.widget {
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+  min-width: 0;
+  overflow: hidden;
+}
+.widget .title {
+  color: var(--dim);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+ktest-readout .value {
+  font-size: 28px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+ktest-readout .unit {
+  color: var(--dim);
+  font-size: 12px;
+}
+ktest-readout.unresolved .value {
+  color: var(--dim);
+}
+ktest-readout.unresolved .unit {
+  color: var(--warn);
+}
+
+ktest-plot .chart,
+ktest-scope .chart {
+  flex: 1;
+  min-height: 0;
+}
+
+/* A scope's settings sit under the trace, as they do on the instrument's own
+   screen: what the acquisition was taken under, beside what it holds. */
+ktest-scope .detail {
+  color: var(--dim);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+ktest-scope.unresolved .detail {
+  color: var(--warn);
+}
+.uplot {
+  color: var(--dim);
+}
+
+ktest-control {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--line);
+}
+ktest-control .inst {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+ktest-control .inst .who {
+  color: var(--dim);
+  font-size: 12px;
+}
+ktest-control .inst.armed b {
+  color: var(--warn);
+}
+ktest-control .stop {
+  margin-left: auto;
+  background: var(--bad);
+  border-color: var(--bad);
+  color: #fff;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding: 6px 18px;
+}
+ktest-control .ctl-error {
+  flex-basis: 100%;
+  color: var(--bad);
+  font-size: 12px;
+}
+
+ktest-setpoint .value {
+  font-size: 24px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+ktest-setpoint .detail,
+ktest-toggle .detail {
+  color: var(--dim);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+ktest-setpoint form {
+  display: flex;
+  gap: 6px;
+  margin-top: auto;
+}
+ktest-setpoint input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 3px 6px;
+}
+.widget.pending .detail {
+  color: var(--warn);
+}
+.widget.differs .detail,
+.widget.refused .detail {
+  color: var(--bad);
+}
+.widget.unresolved .detail {
+  color: var(--warn);
+}
+button:disabled,
+input:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+ktest-toggle .switch {
+  margin: 6px 0;
+  font-size: 18px;
+  font-weight: 600;
+  align-self: flex-start;
+  min-width: 72px;
+}
+ktest-toggle .switch.on {
+  background: var(--live);
+  border-color: var(--live);
+  color: #fff;
+}
+
+ktest-lamp .row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+ktest-lamp .lamp {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--line);
+  border: 2px solid var(--line);
+}
+ktest-lamp.on .lamp {
+  background: var(--live);
+  border-color: var(--live);
+  box-shadow: 0 0 8px var(--live);
+}
+ktest-lamp.unknown .lamp {
+  background: transparent;
+}
+ktest-lamp .state {
+  color: var(--dim);
+}
+
+.table {
+  padding: 16px;
+}
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-variant-numeric: tabular-nums;
+}
+th,
+td {
+  text-align: left;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--line);
+}
+th {
+  color: var(--dim);
+  font-weight: 500;
+}
+.badge {
+  font-size: 11px;
+  color: var(--dim);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+
+.login {
+  max-width: 360px;
+  margin: 12vh auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0 16px;
+}
+.login input {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 8px;
+}
+.login .error {
+  color: var(--bad);
+}
+.loading {
+  padding: 16px;
+  color: var(--dim);
+}

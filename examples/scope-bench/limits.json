@@ -1,0 +1,6 @@
+{
+  "min_period": "1ms",
+  "channels": {
+    "scope1.timebase": {"msiz_max": 700000}
+  }
+}

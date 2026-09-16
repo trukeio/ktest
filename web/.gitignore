@@ -1,0 +1,3 @@
+# Build inputs, not build outputs. dist/ is committed on purpose — see
+# embed.go — because the Go toolchain cannot produce it.
+node_modules/

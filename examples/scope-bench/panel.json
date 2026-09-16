@@ -1,0 +1,12 @@
+{
+  "title": "Scope bench",
+  "widgets": [
+    {"type": "scope", "channel": "scope1.ch1", "label": "C1 — 1 kHz sine", "x": 0, "y": 0, "w": 8, "h": 5},
+    {"type": "readout", "channel": "scope1.timebase.sara", "label": "Sample rate", "x": 8, "y": 0, "w": 4, "h": 2},
+    {"type": "setpoint", "channel": "scope1.ch1.vert.vdiv.set", "label": "C1 volts/div", "x": 8, "y": 2, "w": 4, "h": 2},
+    {"type": "scope", "channel": "scope1.ch2", "label": "C2 — 250 Hz square", "x": 0, "y": 5, "w": 8, "h": 5},
+    {"type": "setpoint", "channel": "scope1.timebase.tdiv.set", "label": "Seconds/div", "x": 8, "y": 4, "w": 4, "h": 2},
+    {"type": "toggle", "channel": "scope1.ch2.vert.on.set", "label": "Display C2", "x": 8, "y": 6, "w": 4, "h": 2},
+    {"type": "readout", "channel": "scope1.acq.points", "label": "Samples an acquisition", "x": 8, "y": 8, "w": 4, "h": 2}
+  ]
+}

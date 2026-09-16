@@ -1,0 +1,81 @@
+/*
+ * MCP2518FD on SPI1 of an Orange Pi Zero 2 (Allwinner H616), as can0 under the
+ * mainline mcp251xfd driver.
+ *
+ * 26-pin header:
+ *
+ *   SCK   pin 23  PH6  spi1
+ *   SDI   pin 19  PH7  spi1 MOSI
+ *   SDO   pin 21  PH8  spi1 MISO
+ *   nCS   pin 24  PH9  spi1 chip select 1 -- chip select 0 is PH5, which the
+ *                      header gives to pin 3 as I2C3 SDA, hence reg = <1>
+ *   nINT  pin 22  PC7  PC_EINT7, active low
+ *   3.3 V pin 1 or 17, GND pin 20 or 25
+ *
+ * The board's crystal is 20 MHz; change clock-frequency if yours is not.
+ *
+ * The pin groups are declared here rather than taken from the base device
+ * tree: the base marks SPI1's pin groups omit-if-no-ref, and on this board
+ * nothing else refers to them, so they need not be in the compiled tree.
+ */
+/dts-v1/;
+/plugin/;
+
+/ {
+	compatible = "xunlong,orangepi-zero2", "allwinner,sun50i-h616";
+
+	fragment@0 {
+		target-path = "/";
+		__overlay__ {
+			can0_osc: can0-osc {
+				compatible = "fixed-clock";
+				#clock-cells = <0>;
+				clock-frequency = <20000000>;
+			};
+		};
+	};
+
+	fragment@1 {
+		target = <&pio>;
+		__overlay__ {
+			can0_spi1_pins: can0-spi1-pins {
+				pins = "PH6", "PH7", "PH8";
+				function = "spi1";
+			};
+
+			can0_spi1_cs1_pin: can0-spi1-cs1-pin {
+				pins = "PH9";
+				function = "spi1";
+			};
+
+			can0_int_pin: can0-int-pin {
+				pins = "PC7";
+				function = "irq";
+				bias-pull-up;
+			};
+		};
+	};
+
+	fragment@2 {
+		target = <&spi1>;
+		__overlay__ {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			pinctrl-names = "default";
+			pinctrl-0 = <&can0_spi1_pins>, <&can0_spi1_cs1_pin>;
+			status = "okay";
+
+			can@1 {
+				compatible = "microchip,mcp2518fd";
+				reg = <1>;
+				pinctrl-names = "default";
+				pinctrl-0 = <&can0_int_pin>;
+				clocks = <&can0_osc>;
+				interrupt-parent = <&pio>;
+				interrupts = <2 7 8>;	/* PC7, IRQ_TYPE_LEVEL_LOW */
+				/* The driver caps SPI at 0.85 x clock / 2 itself: 8.5 MHz here. */
+				spi-max-frequency = <8500000>;
+			};
+		};
+	};
+};
