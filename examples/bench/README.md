@@ -44,7 +44,9 @@ widgets in the upper box, the scope's below it — and they are governed apart:
 
 The supply, as in `../supply-bench`:
 
-- ch1 voltage 5, ch1 output **ON**: measured 5 V, 0.5 A.
+- ch1 current limit 0.5 first — the supply starts with its limit at 0 A, so
+  nothing flows until it is raised — then ch1 voltage 5 and ch1 output **ON**:
+  measured 5 V, 0.5 A.
 - ch1 current limit 0.2: the supply goes constant-current, 2 V and 0.2 A.
 - ch1 voltage 20: refused — `limits.json` caps ch1 at 12 V, and the refusal is
   in the recording with everything else.

@@ -2,7 +2,7 @@
 // data reaches it only through draw(), which writes into the surface directly
 // (§10.1). The rack calls draw() from its one animation frame loop.
 
-import { LitElement, html } from "lit";
+import { LitElement, html, svg } from "lit";
 import uPlot from "uplot";
 import { lowerBound, type Store } from "./store.ts";
 import type { Acquisition, Latest } from "./messages.ts";
@@ -627,6 +627,288 @@ export class BoxHeadElement extends LitElement implements Drawable {
   }
 }
 
+// The dials. A gauge shows where a value sits between the ends of its scale
+// and a knob sets one, and both are the same drawing: an arc, a needle, and a
+// scale that never moves. The arc is drawn once at its full length and shown
+// in part by its dash pattern, so a frame costs two attribute writes and no
+// path arithmetic.
+//
+// Degrees are clockwise from straight up, which is how a dial is read.
+
+function polar(cx: number, cy: number, r: number, deg: number): { x: number; y: number } {
+  const a = ((deg - 90) * Math.PI) / 180;
+  return { x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) };
+}
+
+function arcPath(cx: number, cy: number, r: number, from: number, to: number): string {
+  const s = polar(cx, cy, r, from);
+  const e = polar(cx, cy, r, to);
+  const large = Math.abs(to - from) > 180 ? 1 : 0;
+  return `M ${s.x.toFixed(2)} ${s.y.toFixed(2)} A ${r} ${r} 0 ${large} 1 ${e.x.toFixed(2)} ${e.y.toFixed(2)}`;
+}
+
+/** fraction is where v sits on the scale, 0 to 1, and never off the ends. */
+function fraction(v: number, min: number, max: number): number {
+  return Math.min(1, Math.max(0, (v - min) / (max - min)));
+}
+
+/** tidy drops the floating-point dust a step multiplication leaves behind. */
+function tidy(v: number): number {
+  return Number(v.toPrecision(12));
+}
+
+/**
+ * A gauge: one channel on a scale. It answers the question a readout cannot —
+ * where this value sits between its ends, and how close it is to one — and it
+ * only shows, so it needs neither the lease nor the arming.
+ */
+export class GaugeElement extends LitElement implements Drawable {
+  static properties = {
+    channel: { type: String },
+    label: { type: String },
+    min: { type: Number },
+    max: { type: Number },
+  };
+  declare channel: string;
+  declare label: string;
+  declare min: number;
+  declare max: number;
+  declare store: Store;
+
+  /** The arc, drawn whole; draw() shows a part of it with a dash. */
+  private static readonly LENGTH = Math.PI * 36;
+
+  createRenderRoot() {
+    return this;
+  }
+
+  private ends() {
+    const min = this.min ?? 0;
+    const max = this.max ?? 100;
+    return max > min ? { min, max } : { min, max: min + 1 };
+  }
+
+  render() {
+    const { min, max } = this.ends();
+    const arc = arcPath(50, 46, 36, -90, 90);
+    const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => {
+      const deg = -90 + f * 180;
+      const at = polar(50, 46, 46, deg);
+      const anchor = deg < -20 ? "end" : deg > 20 ? "start" : "middle";
+      return svg`<text class="tick" x=${at.x.toFixed(1)} y=${(at.y + 2).toFixed(1)} text-anchor=${anchor}>${
+        format(tidy(min + f * (max - min)))
+      }</text>`;
+    });
+    return html`<div class="title">${this.label || this.channel}</div>
+      <svg class="dial" viewBox="-10 0 120 54" preserveAspectRatio="xMidYMid meet">
+        <path class="track" d=${arc} />
+        <path class="arc" d=${arc} stroke-dasharray="0 999" />
+        ${ticks}
+        <line class="needle" x1="50" y1="46" x2="50" y2="16" transform="rotate(-90 50 46)" />
+        <circle class="hub" cx="50" cy="46" r="2.5" />
+      </svg>
+      <div class="value">—</div>
+      <div class="detail"></div>`;
+  }
+
+  draw() {
+    const arc = this.querySelector(".arc");
+    const needle = this.querySelector(".needle");
+    const value = this.querySelector(".value");
+    const detail = this.querySelector(".detail");
+    if (!arc || !needle || !value || !detail) return;
+    const info = this.store.channels.get(this.channel);
+    const v = this.store.latest.get(this.channel);
+    const { min, max } = this.ends();
+    const num = typeof v === "number" ? v : undefined;
+    const f = num === undefined ? 0 : fraction(num, min, max);
+    const L = GaugeElement.LENGTH;
+    arc.setAttribute("stroke-dasharray", `${(f * L).toFixed(2)} ${L.toFixed(2)}`);
+    needle.setAttribute("transform", `rotate(${(-90 + f * 180).toFixed(2)} 50 46)`);
+    value.textContent = num === undefined ? "—" : `${format(num)} ${info?.unit ?? ""}`;
+    // A value off the end of the scale pins the needle, so the widget says so
+    // rather than letting a pinned needle read as a steady one.
+    const off = num !== undefined && (num < min || num > max);
+    detail.textContent = !info ? "no such channel yet" : off ? `off the scale: ${format(num)}` : `${format(min)} to ${format(max)}`;
+    this.classList.toggle("unresolved", !info);
+    this.classList.toggle("off-scale", off);
+  }
+}
+
+/**
+ * A knob: a scale to turn, which sets a channel. It writes, so it obeys §4
+ * exactly as the setpoint does — the needle is what the instrument holds, and
+ * what was asked for is a separate mark, shown when the two differ. Dragging
+ * it turns it and sending happens on release; the arrow keys step it, so it
+ * can be used without a pointer.
+ */
+export class KnobElement extends LitElement implements Drawable {
+  static properties = {
+    channel: { type: String },
+    label: { type: String },
+    step: { type: Number },
+    min: { type: Number },
+    max: { type: Number },
+  };
+  declare channel: string;
+  declare label: string;
+  declare step: number;
+  declare min: number;
+  declare max: number;
+  declare store: Store;
+  declare control: Control;
+
+  /** The 270° arc, drawn whole; draw() shows a part of it with a dash. */
+  private static readonly LENGTH = 2 * Math.PI * 28 * 0.75;
+
+  /** While a pointer is down: where it is pointing, not yet sent. */
+  private turning?: number;
+  /** Sent and not yet in the recording's set account. */
+  private pending?: number;
+  private error = "";
+
+  createRenderRoot() {
+    return this;
+  }
+
+  private ends() {
+    const min = this.min ?? 0;
+    const max = this.max ?? 100;
+    return max > min ? { min, max } : { min, max: min + 1 };
+  }
+
+  /** can says whether this page may write: it holds the lease and the instrument is armed. */
+  private can(): boolean {
+    const inst = instrumentOf(this.channel);
+    return this.control.holds(inst) && armed(this.store, inst);
+  }
+
+  render() {
+    const { min, max } = this.ends();
+    const arc = arcPath(50, 40, 28, -135, 135);
+    return html`<div class="title">${this.label || this.channel}</div>
+      <svg class="dial" viewBox="-10 0 120 70" preserveAspectRatio="xMidYMid meet">
+        <path class="track" d=${arc} />
+        <path class="arc" d=${arc} stroke-dasharray="0 999" />
+        <text class="tick" x="14" y="66" text-anchor="middle">${format(min)}</text>
+        <text class="tick" x="86" y="66" text-anchor="middle">${format(max)}</text>
+        <line class="marker" x1="50" y1="4" x2="50" y2="10" transform="rotate(-135 50 40)" />
+        <line class="needle" x1="50" y1="40" x2="50" y2="18" transform="rotate(-135 50 40)" />
+        <circle class="hub" cx="50" cy="40" r="3" />
+      </svg>
+      <div class="value">—</div>
+      <div class="detail"></div>`;
+  }
+
+  firstUpdated() {
+    const el = this.querySelector<SVGSVGElement>(".dial");
+    if (!el) return;
+    el.addEventListener("pointerdown", (e) => {
+      if (!this.can()) return;
+      el.setPointerCapture(e.pointerId);
+      this.turning = this.at(e);
+      this.error = "";
+      this.draw();
+    });
+    el.addEventListener("pointermove", (e) => {
+      if (this.turning === undefined) return;
+      this.turning = this.at(e);
+      this.draw();
+    });
+    el.addEventListener("pointerup", (e) => {
+      if (this.turning === undefined) return;
+      const v = this.at(e);
+      this.turning = undefined;
+      void this.send(v);
+    });
+    el.addEventListener("pointercancel", () => {
+      this.turning = undefined;
+      this.draw();
+    });
+    this.addEventListener("keydown", (e) => this.key(e));
+  }
+
+  /** at is where the pointer points, on the scale: viewBox coordinates, so the aspect cannot lie. */
+  private at(e: PointerEvent): number {
+    const el = this.querySelector<SVGSVGElement>(".dial")!;
+    const m = el.getScreenCTM();
+    const { min, max } = this.ends();
+    if (!m) return min;
+    const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(m.inverse());
+    const deg = (Math.atan2(p.x - 50, 40 - p.y) * 180) / Math.PI;
+    const f = (Math.min(135, Math.max(-135, deg)) + 135) / 270;
+    const v = min + f * (max - min);
+    return this.step > 0 ? tidy(Math.round(v / this.step) * this.step) : tidy(v);
+  }
+
+  private key(e: KeyboardEvent) {
+    const by = e.key === "ArrowUp" || e.key === "ArrowRight" ? 1 : e.key === "ArrowDown" || e.key === "ArrowLeft" ? -1 : 0;
+    if (by === 0 || !this.can()) return;
+    e.preventDefault();
+    const { min, max } = this.ends();
+    const step = this.step > 0 ? this.step : (max - min) / 100;
+    const applied = this.store.latest.get(appliedOf(this.channel));
+    const from = this.pending ?? (typeof applied === "number" ? applied : min);
+    void this.send(tidy(Math.min(max, Math.max(min, from + by * step))));
+  }
+
+  private async send(v: number) {
+    this.pending = v;
+    this.error = "";
+    this.draw();
+    const a = await this.control.write(this.channel, v);
+    if (!a.ok) {
+      this.pending = undefined;
+      this.error = a.error ?? `HTTP ${a.status}`;
+    }
+    this.draw();
+  }
+
+  draw() {
+    const arc = this.querySelector(".arc");
+    const needle = this.querySelector(".needle");
+    const marker = this.querySelector(".marker");
+    const value = this.querySelector(".value");
+    const detail = this.querySelector(".detail");
+    if (!arc || !needle || !marker || !value || !detail) return;
+    const info = this.store.channels.get(appliedOf(this.channel));
+    const set = this.store.latest.get(this.channel);
+    const applied = this.store.latest.get(appliedOf(this.channel));
+    if (this.pending !== undefined && set === this.pending) this.pending = undefined;
+    const { min, max } = this.ends();
+    const unit = info?.unit ?? "";
+    const held = typeof applied === "number" ? applied : undefined;
+    // The needle is what the instrument holds, except while it is being turned
+    // or a value is on its way, when it is what was asked for.
+    const shown = this.turning ?? this.pending ?? held;
+    const f = shown === undefined ? 0 : fraction(shown, min, max);
+    const L = KnobElement.LENGTH;
+    arc.setAttribute("stroke-dasharray", `${(f * L).toFixed(2)} ${L.toFixed(2)}`);
+    needle.setAttribute("transform", `rotate(${(-135 + f * 270).toFixed(2)} 50 40)`);
+
+    const differs = typeof set === "number" && held !== undefined && Math.abs(set - held) > 1e-9;
+    const setF = typeof set === "number" ? fraction(set, min, max) : 0;
+    marker.setAttribute("transform", `rotate(${(-135 + setF * 270).toFixed(2)} 50 40)`);
+    marker.classList.toggle("shown", differs && this.turning === undefined && this.pending === undefined);
+
+    value.textContent = shown === undefined ? "—" : `${format(shown)} ${unit}`;
+    let d = info ? `set ${format(set)} ${set === undefined ? "" : unit}` : "no such channel yet";
+    if (this.turning !== undefined) d = `turning to ${format(this.turning)} ${unit}`;
+    else if (this.pending !== undefined) d = `sending ${format(this.pending)} ${unit}…`;
+    else if (this.error) d = this.error;
+    else if (differs) d += ` · the instrument holds ${format(held)} ${unit}`;
+    detail.textContent = d;
+
+    const busy = this.turning !== undefined || this.pending !== undefined;
+    this.classList.toggle("unresolved", !info);
+    this.classList.toggle("pending", busy);
+    this.classList.toggle("refused", this.error !== "");
+    this.classList.toggle("differs", differs && !busy);
+    this.classList.toggle("locked", !this.can());
+    this.tabIndex = this.can() ? 0 : -1;
+  }
+}
+
 customElements.define("ktest-readout", ReadoutElement);
 customElements.define("ktest-plot", PlotElement);
 customElements.define("ktest-scope", ScopeElement);
@@ -636,3 +918,5 @@ customElements.define("ktest-toggle", ToggleElement);
 customElements.define("ktest-lamp", LampElement);
 customElements.define("ktest-control", ControlBarElement);
 customElements.define("ktest-box-head", BoxHeadElement);
+customElements.define("ktest-gauge", GaugeElement);
+customElements.define("ktest-knob", KnobElement);

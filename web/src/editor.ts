@@ -11,8 +11,11 @@ import {
   accepts,
   columnsOf,
   columnsOfGroup,
+  dial,
   groupsOf,
   problems,
+  scaleOf,
+  stepped,
   type Group,
   type Panel,
   type Pick,
@@ -35,8 +38,10 @@ const val = (e: Event) => (e.target as HTMLInputElement).value.trim();
 /** What a widget's channel looks like, as a hint in the empty field. */
 const PLACEHOLDER: Partial<Record<WidgetType, string>> = {
   setpoint: "psu1.ch1.v.set",
+  knob: "psu1.ch1.v.set",
   toggle: "psu1.ch1.out.set",
   scope: "scope1.ch1",
+  gauge: "psu1.ch1.meas.v",
 };
 
 export class EditorElement extends LitElement {
@@ -319,7 +324,7 @@ export class EditorElement extends LitElement {
                 }}
             /></label>
             ${unknown(w.channel ?? "")}`}
-      ${w.type === "setpoint"
+      ${stepped(w.type)
         ? html`<label
             >Step
             <input
@@ -332,6 +337,32 @@ export class EditorElement extends LitElement {
                 this.app.changed();
               }}
           /></label>`
+        : nothing}
+      ${dial(w.type)
+        ? html`<div class="row">
+            <label
+              >Scale from
+              <input
+                type="number"
+                step="any"
+                .value=${String(scaleOf(w).min)}
+                @change=${(e: Event) => {
+                  w.min = Number(val(e)) || undefined;
+                  this.app.changed();
+                }}
+            /></label>
+            <label
+              >to
+              <input
+                type="number"
+                step="any"
+                .value=${String(scaleOf(w).max)}
+                @change=${(e: Event) => {
+                  w.max = Number(val(e)) || undefined;
+                  this.app.changed();
+                }}
+            /></label>
+          </div>`
         : nothing}
       <button class="danger" @click=${() => this.app.removeWidget(pick)}>Remove this widget</button>
     </fieldset>`;

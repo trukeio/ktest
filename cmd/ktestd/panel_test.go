@@ -89,6 +89,46 @@ func TestCheckPanelGroups(t *testing.T) {
 	}
 }
 
+// TestCheckPanelDials holds the widgets that draw a scale to the rules that
+// come with one: a scale belongs only to them, it must be an interval, and a
+// knob writes a number as a setpoint does.
+func TestCheckPanelDials(t *testing.T) {
+	good := `{"columns": 12, "widgets": [
+		{"type": "gauge", "channel": "psu1.ch1.meas.v", "min": 0, "max": 30, "x": 0, "y": 0, "w": 3, "h": 3},
+		{"type": "gauge", "channel": "psu1.ch1.meas.i", "x": 3, "y": 0, "w": 3, "h": 3},
+		{"type": "knob", "channel": "psu1.ch1.v.set", "min": -5, "max": 12, "step": 0.1, "x": 6, "y": 0, "w": 2, "h": 3}
+	]}`
+	if err := checkPanel([]byte(good)); err != nil {
+		t.Fatalf("a good panel: %v", err)
+	}
+	for _, tc := range []struct{ name, from, to, want string }{
+		{"a scale that is not an interval", `"min": 0, "max": 30`, `"min": 30, "max": 0`, "a scale from 30 to 0"},
+		{"a scale of no width", `"min": 0, "max": 30`, `"min": 7, "max": 7`, "a scale from 7 to 7"},
+		{"a scale on something with no scale", `{"type": "gauge", "channel": "psu1.ch1.meas.i"`,
+			`{"type": "readout", "min": 1, "max": 2, "channel": "psu1.ch1.meas.i"`, `only a gauge or a knob has a "min"`},
+		{"a step on a gauge", `{"type": "gauge", "channel": "psu1.ch1.meas.i"`,
+			`{"type": "gauge", "step": 1, "channel": "psu1.ch1.meas.i"`, `only a setpoint or a knob has a "step"`},
+		{"a knob on a switch", `"channel": "psu1.ch1.v.set", "min": -5`, `"channel": "psu1.ch1.out.set", "min": -5`,
+			"a toggle switches something on or off"},
+		{"a knob on something that cannot be set", `"channel": "psu1.ch1.v.set", "min": -5`,
+			`"channel": "psu1.ch1.meas.v", "min": -5`, `a knob writes one "channel" that can be set`},
+		{"a gauge given two channels", `{"type": "gauge", "channel": "psu1.ch1.meas.i"`,
+			`{"type": "gauge", "channels": ["psu1.ch1.meas.i"], "channel": "psu1.ch1.meas.i"`,
+			`a gauge shows one "channel"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bad := strings.Replace(good, tc.from, tc.to, 1)
+			if bad == good {
+				t.Fatalf("the case changed nothing")
+			}
+			err := checkPanel([]byte(bad))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("got %v, want an error naming %q", err, tc.want)
+			}
+		})
+	}
+}
+
 // TestExamplePanels holds the panels the examples ship to the same rules as
 // any other, since a demo whose panel the daemon refuses is a demo that does
 // not start.

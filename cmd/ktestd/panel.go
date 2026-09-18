@@ -85,7 +85,9 @@ type widget struct {
 	Channel  string   `json:"channel"`
 	Channels []string `json:"channels"`
 	Window   float64  `json:"window"` // plot: seconds shown
-	Step     float64  `json:"step"`   // setpoint: the input's step; 0 for any
+	Step     float64  `json:"step"`   // setpoint and knob: the step it moves in; 0 for any
+	Min      float64  `json:"min"`    // gauge and knob: the ends of the scale;
+	Max      float64  `json:"max"`    // both unsaid means 0 to 100
 	X        int      `json:"x"`
 	Y        int      `json:"y"`
 	W        int      `json:"w"`
@@ -196,9 +198,9 @@ func checkWidgets(ws []widget, cols int, in string) error {
 	for i, w := range ws {
 		where := fmt.Sprintf("%swidget %d (%s)", in, i, w.Type)
 		switch w.Type {
-		case "readout":
+		case "readout", "gauge":
 			if w.Channel == "" || len(w.Channels) > 0 {
-				return fmt.Errorf(`%s: a readout shows one "channel"`, where)
+				return fmt.Errorf(`%s: a %s shows one "channel"`, where, w.Type)
 			}
 		case "plot":
 			if len(w.Channels) == 0 || w.Channel != "" {
@@ -214,17 +216,17 @@ func checkWidgets(ws []widget, cols int, in string) error {
 			if w.Channel == "" || len(w.Channels) > 0 || !scopeChannel.MatchString(w.Channel) {
 				return fmt.Errorf(`%s: a scope draws one "channel", a scope channel such as scope1.ch1`, where)
 			}
-		case "setpoint", "toggle":
+		case "setpoint", "toggle", "knob":
 			// These write, so their channel must be one that can be written,
 			// and of the right kind: a toggle switches something on or off, a
-			// setpoint sets a number.
+			// setpoint or a knob sets a number.
 			cn, err := parseChannel(w.Channel)
 			if err != nil || len(w.Channels) > 0 {
 				return fmt.Errorf(`%s: a %s writes one "channel" that can be set, such as psu1.ch1.v.set`, where, w.Type)
 			}
 			if (w.Type == "toggle") != isSwitch(cn.what) {
 				return fmt.Errorf("%s: a toggle switches something on or off, such as out.set or on.set, and a "+
-					"setpoint sets a number; %s is neither", where, w.Channel)
+					"%s sets a number; %s is neither", where, w.Type, w.Channel)
 			}
 			if w.Step < 0 {
 				return fmt.Errorf("%s: a step of %g", where, w.Step)
@@ -234,11 +236,23 @@ func checkWidgets(ws []widget, cols int, in string) error {
 				return fmt.Errorf(`%s: a lamp shows one "channel"`, where)
 			}
 		default:
-			return fmt.Errorf(`%s: no widget type %q; there are "readout", "plot", "scope", "setpoint", "toggle" and "lamp"`,
-				where, w.Type)
+			return fmt.Errorf(`%s: no widget type %q; there are "readout", "gauge", "plot", "scope", `+
+				`"setpoint", "knob", "toggle" and "lamp"`, where, w.Type)
 		}
-		if w.Step != 0 && w.Type != "setpoint" {
-			return fmt.Errorf(`%s: only a setpoint has a "step"`, where)
+		if w.Step != 0 && w.Type != "setpoint" && w.Type != "knob" {
+			return fmt.Errorf(`%s: only a setpoint or a knob has a "step"`, where)
+		}
+		// A scale belongs to the widgets that draw one, and must be an
+		// interval: a needle on a scale of no width says nothing, and would
+		// divide by zero saying it. Both ends unsaid is the 0 to 100 a dial
+		// falls back to.
+		if w.Min != 0 || w.Max != 0 {
+			if w.Type != "gauge" && w.Type != "knob" {
+				return fmt.Errorf(`%s: only a gauge or a knob has a "min" and a "max"`, where)
+			}
+			if w.Max <= w.Min {
+				return fmt.Errorf("%s: a scale from %g to %g", where, w.Min, w.Max)
+			}
 		}
 		if w.X < 0 || w.Y < 0 || w.W < 1 || w.H < 1 {
 			return fmt.Errorf("%s: placed at %d,%d, %d by %d cells", where, w.X, w.Y, w.W, w.H)

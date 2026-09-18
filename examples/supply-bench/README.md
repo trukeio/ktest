@@ -16,10 +16,23 @@ machine). The certificate is self-signed: *Advanced → Proceed*. Paste the toke
 
 Then:
 
-- **Take control**, then **Arm**: the widgets unlock.
-- ch1 voltage 5, ch1 output **ON**: measured 5 V, 0.5 A.
-- ch1 current limit 0.2: the supply goes constant-current, 2 V and 0.2 A.
-- ch1 voltage 20: refused — `limits.json` caps ch1 at 12 V.
+- **Take control**, then **Arm**: the panel's widgets unlock. Both are the
+  panel's, as the stop is — a rack is one bench.
+- The supply starts at 0 V with its current limit at 0 A, so raise **ch1
+  current limit** first — drag the knob, or click it and use the arrow keys —
+  to about 0.5 A, and switch **ch1 output** on.
+- Now turn **ch1 voltage** to 6. The gauges read **5 V and 0.5 A**, not 6 V:
+  6 V across the simulated 10 Ω load would draw 0.6 A, more than the limit
+  allows, so the supply regulates current instead and the voltage lands where
+  the limit puts it. The knobs hold what was asked for; the gauges show what
+  the supply measures at its terminals, and this is exactly where the two part.
+- The knob's needle is the setpoint the supply *holds*; what was asked for is
+  the separate mark on the rim, shown only while the two differ (§4) — which is
+  what a setpoint clamped to the channel's rating looks like. The knob's scale
+  stops at 12 V because that is what `limits.json` allows: a scale says what is
+  worth asking for, and enforces nothing.
+- ch1 voltage 20, typed into **ch1 voltage, typed**: refused — `limits.json`
+  caps ch1 at 12 V, and the refusal is in the recording with everything else.
 - ch2 voltage 12: shown as set 12 V, held 6 V — the channel is rated 6 V and the
   supply clamps it.
 - **STOP**: every instrument disarmed, every output off.

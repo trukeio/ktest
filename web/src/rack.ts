@@ -11,7 +11,17 @@ import { GridStack } from "gridstack";
 import type { Store } from "./store.ts";
 import type { Control } from "./control.ts";
 import type { Drawable } from "./widgets.ts";
-import { columnsOfGroup, groupsOf, type Group, type Panel, type Pick, type WidgetSpec } from "./panel.ts";
+import {
+  columnsOfGroup,
+  dial,
+  groupsOf,
+  scaleOf,
+  stepped,
+  type Group,
+  type Panel,
+  type Pick,
+  type WidgetSpec,
+} from "./panel.ts";
 
 const TAGS = {
   readout: "ktest-readout",
@@ -20,6 +30,8 @@ const TAGS = {
   setpoint: "ktest-setpoint",
   toggle: "ktest-toggle",
   lamp: "ktest-lamp",
+  gauge: "ktest-gauge",
+  knob: "ktest-knob",
 } as const;
 
 /** One grid row, in pixels: 64 for the widget and 8 between rows, as the rack has always been. */
@@ -160,7 +172,10 @@ export class Rack {
     Object.assign(el, { store: this.store, control: this.control, label: w.label ?? "" });
     if (w.type === "plot") Object.assign(el, { channels: w.channels ?? [], window: w.window ?? 10 });
     else Object.assign(el, { channel: w.channel ?? "" });
-    if (w.type === "setpoint") Object.assign(el, { step: w.step ?? 0 });
+    if (stepped(w.type)) Object.assign(el, { step: w.step ?? 0 });
+    // The scale is resolved here rather than in the widget, so that the file's
+    // silence means one thing in one place.
+    if (dial(w.type)) Object.assign(el, scaleOf(w));
     return el;
   }
 }

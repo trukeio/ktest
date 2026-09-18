@@ -456,6 +456,96 @@ ktest-toggle .switch.on {
   color: #fff;
 }
 
+/* The dials. A gauge shows, a knob sets, and both are an arc with a needle:
+   one stylesheet, two widgets. */
+ktest-gauge .dial,
+ktest-knob .dial {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  margin: 4px 0 2px;
+  /* Dragging a knob must turn it, not select the numbers on its scale. */
+  user-select: none;
+  -webkit-user-select: none;
+}
+ktest-gauge .track,
+ktest-knob .track,
+ktest-gauge .arc,
+ktest-knob .arc {
+  fill: none;
+  stroke-width: 7;
+  stroke-linecap: round;
+}
+ktest-gauge .track,
+ktest-knob .track {
+  stroke: var(--line);
+}
+ktest-gauge .arc,
+ktest-knob .arc {
+  stroke: var(--live);
+}
+ktest-gauge.off-scale .arc {
+  stroke: var(--bad);
+}
+ktest-knob.pending .arc {
+  stroke: var(--warn);
+}
+ktest-knob.differs .arc {
+  stroke: var(--bad);
+}
+ktest-gauge .needle,
+ktest-knob .needle {
+  stroke: var(--text);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+}
+ktest-gauge .hub,
+ktest-knob .hub {
+  fill: var(--text);
+}
+ktest-gauge .tick,
+ktest-knob .tick {
+  fill: var(--dim);
+  font-size: 7px;
+  font-variant-numeric: tabular-nums;
+}
+/* What was asked for, when the instrument holds something else (§4). */
+ktest-knob .marker {
+  stroke: var(--warn);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  visibility: hidden;
+}
+ktest-knob .marker.shown {
+  visibility: visible;
+}
+ktest-gauge .value,
+ktest-knob .value {
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+ktest-gauge .detail,
+ktest-knob .detail {
+  color: var(--dim);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+ktest-knob .dial {
+  cursor: grab;
+  touch-action: none;
+}
+ktest-knob.locked .dial {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+ktest-knob:focus-visible {
+  outline: 1px solid var(--warn);
+  outline-offset: -1px;
+}
+
 ktest-lamp .row {
   display: flex;
   align-items: center;
