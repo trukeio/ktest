@@ -1,0 +1,7 @@
+{
+  "min_period": "1ms",
+  "channels": {
+    "psu1.ch1": {"v_max": 12, "i_max": 1},
+    "scope1.timebase": {"msiz_max": 700000}
+  }
+}
