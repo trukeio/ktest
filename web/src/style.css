@@ -261,6 +261,19 @@ button.danger {
   font-size: 12px;
   font-weight: 600;
 }
+.instrument > .box-head > .box-state {
+  color: var(--dim);
+  font-size: 12px;
+}
+.instrument > .box-head.armed > .box-state {
+  color: var(--live);
+}
+.instrument > .box-head.unresolved > .box-state {
+  color: var(--warn);
+}
+.instrument > .box-head.armed > .badge {
+  background: color-mix(in srgb, var(--live) 40%, var(--line));
+}
 .instrument > .box-head > .badge {
   margin-left: auto;
   background: var(--line);

@@ -111,6 +111,72 @@ export class Control {
     if (!a.ok) this.fail(name, a);
   }
 
+  /** held is how many of the panel's instruments this page holds. */
+  held(): number {
+    return this.instruments.filter((n) => this.tokens.has(n)).length;
+  }
+
+  /**
+   * takeAll takes every instrument on the panel, since a rack is one bench in
+   * front of one person. The daemon still leases each instrument on its own
+   * (§7), so one of them may be held elsewhere; what that costs is said rather
+   * than hidden, and the ones taken stay taken.
+   */
+  async takeAll() {
+    const failed: string[] = [];
+    for (const n of this.instruments) {
+      if (this.tokens.has(n)) continue;
+      const a = await this.call("POST", this.path(n, "lease"), { ttl: TTL });
+      if (!a.ok || !a.token) {
+        failed.push(`${n}: ${a.error ?? `HTTP ${a.status}`}`);
+        continue;
+      }
+      this.tokens.set(n, a.token);
+      if (!this.timers.has(n)) this.timers.set(n, window.setInterval(() => void this.renew(n), RENEW_MS));
+    }
+    this.changed(failed.join(" · "));
+  }
+
+  /** releaseAll lets go of every lease this page holds, disarming each as it goes. */
+  async releaseAll() {
+    const failed: string[] = [];
+    for (const n of [...this.tokens.keys()]) {
+      const a = await this.call("DELETE", this.path(n, "lease"), undefined, n);
+      this.drop(n);
+      if (!a.ok) failed.push(`${n}: ${a.error ?? `HTTP ${a.status}`}`);
+    }
+    this.changed(failed.join(" · "));
+  }
+
+  /** armAll arms every instrument this page holds; arming is a write, and needs the lease. */
+  async armAll() {
+    const held = this.instruments.filter((n) => this.tokens.has(n));
+    if (held.length === 0) {
+      this.changed("take control of the panel before arming it");
+      return;
+    }
+    const failed: string[] = [];
+    for (const n of held) {
+      const a = await this.call("POST", this.path(n, "arm"), undefined, n);
+      if (!a.ok) failed.push(`${n}: ${a.error ?? `HTTP ${a.status}`}`);
+    }
+    this.changed(failed.join(" · "));
+  }
+
+  /**
+   * disarmAll disarms the panel's instruments and needs no lease: stopping is
+   * always safe. It is not the stop — that is everything the daemon drives,
+   * whether this panel shows it or not.
+   */
+  async disarmAll() {
+    const failed: string[] = [];
+    for (const n of this.instruments) {
+      const a = await this.call("POST", this.path(n, "disarm"), undefined, n);
+      if (!a.ok) failed.push(`${n}: ${a.error ?? `HTTP ${a.status}`}`);
+    }
+    this.changed(failed.join(" · "));
+  }
+
   /** stop disarms everything the daemon drives: the bus, the supplies, the scopes. */
   async stop() {
     const a = await this.call("POST", "disarm");

@@ -136,24 +136,22 @@ export class Rack {
     }
   }
 
-  // head is a box's strip: what it is called, and the instrument it is for as
-  // a badge. A box that says neither has no strip at all. The instrument's
-  // lease and arming belong here and are not here yet.
+  // head is a box's strip: what it is called, the instrument it is for as a
+  // badge, and that instrument's state, drawn from the frame loop like any
+  // other live thing. A box that is for nothing and says nothing has no strip
+  // at all, except while editing, where it is what there is to click.
   private head(g: Group, gi: number): HTMLElement | null {
     if (!g.label && !g.instrument && !this.editing) return null;
-    const head = document.createElement("div");
+    const head = document.createElement("ktest-box-head") as unknown as Drawable & Record<string, unknown>;
     head.className = "box-head";
-    const label = document.createElement("span");
-    label.className = "box-label";
-    label.textContent = g.label || g.instrument || `Box ${gi + 1}`;
-    head.append(label);
-    if (g.instrument) {
-      const badge = document.createElement("span");
-      badge.className = "badge";
-      badge.textContent = g.instrument;
-      head.append(badge);
-    }
-    return head;
+    Object.assign(head, {
+      store: this.store,
+      control: this.control,
+      label: g.label || g.instrument || `Box ${gi + 1}`,
+      instrument: g.instrument ?? "",
+    });
+    this.widgets.push(head);
+    return head as unknown as HTMLElement;
   }
 
   private make(w: WidgetSpec): Drawable {

@@ -527,9 +527,13 @@ export class LampElement extends LitElement implements Drawable {
 }
 
 /**
- * The control bar: each instrument the panel writes to — who holds it and
- * whether it is armed, from its control stream — with the buttons to take it,
- * arm it and let it go, and the stop, which anyone may press at any time.
+ * The control bar: the panel as one thing to take control of, arm and stop.
+ *
+ * The daemon leases and arms each instrument on its own (§7) and that has not
+ * changed — a lease refused is still a lease refused, and two pages can still
+ * drive two instruments. But a rack is one bench in front of one person, so
+ * these take the panel's instruments together and say how many when they do
+ * not agree. Which one is which is on the box, in its own header.
  */
 export class ControlBarElement extends LitElement implements Drawable {
   declare store: Store;
@@ -540,28 +544,28 @@ export class ControlBarElement extends LitElement implements Drawable {
     return this;
   }
 
-  private state(name: string) {
-    const l = this.store.latest;
+  private counts() {
+    const all = this.control.instruments;
     return {
-      armed: l.get(`${name}.control.armed`) === true,
-      holder: String(l.get(`${name}.control.holder`) ?? ""),
-      mine: this.control.holds(name),
+      n: all.length,
+      held: all.filter((n) => this.control.holds(n)).length,
+      on: all.filter((n) => armed(this.store, n)).length,
     };
   }
 
   render() {
-    return html`${this.control.instruments.map((n) => {
-        const s = this.state(n);
-        return html`<span class="inst ${s.armed ? "armed" : ""}">
-          <b>${n}</b>
-          <span class="who">${s.holder ? `held by ${s.holder}` : "free"}${s.armed ? " · armed" : ""}</span>
-          ${s.mine
-            ? html`<button @click=${() => this.control.release(n)}>Release</button>
-                ${s.armed ? "" : html`<button @click=${() => this.control.arm(n)}>Arm</button>`}`
-            : html`<button @click=${() => this.control.take(n)}>Take control</button>`}
-          ${s.armed ? html`<button @click=${() => this.control.disarm(n)}>Disarm</button>` : ""}
-        </span>`;
-      })}
+    const { n, held, on } = this.counts();
+    const some = (k: number) => (k === 0 ? "none" : k === n ? "all" : `${k} of ${n}`);
+    return html`<span class="inst ${n > 0 && on === n ? "armed" : ""}">
+        <b>${n} instrument${n === 1 ? "" : "s"}</b>
+        <span class="who">${n === 0 ? "none on this panel" : `${some(held)} yours · ${some(on)} armed`}</span>
+      </span>
+      ${n > 0 && held === n
+        ? html`<button @click=${() => void this.control.releaseAll()}>Release control</button>`
+        : html`<button ?disabled=${n === 0} @click=${() => void this.control.takeAll()}>Take control</button>`}
+      ${on > 0
+        ? html`<button @click=${() => void this.control.disarmAll()}>Disarm</button>`
+        : html`<button ?disabled=${held === 0} @click=${() => void this.control.armAll()}>Arm</button>`}
       <button class="stop" title="Disarm everything and switch every supply output off" @click=${() => this.control.stop()}>
         STOP
       </button>
@@ -569,12 +573,57 @@ export class ControlBarElement extends LitElement implements Drawable {
   }
 
   draw() {
-    const key = `${this.control.version}|${this.control.message}|` +
-      this.control.instruments.map((n) => JSON.stringify(this.state(n))).join("|");
+    const { n, held, on } = this.counts();
+    const key = `${this.control.version}|${this.control.message}|${n}|${held}|${on}`;
     if (key !== this.key) {
       this.key = key;
       this.requestUpdate();
     }
+  }
+}
+
+/**
+ * An instrument box's header: what the box is called, the instrument it is
+ * for, and that instrument's own state — its kind, who holds it, whether it is
+ * armed. Taking control and arming are the panel's and live in the bar; what
+ * is here is what is true of this one instrument.
+ *
+ * It is a Drawable written from the rack's frame loop rather than a Lit
+ * property bound to the store, because it shows live state and §10.1's rule is
+ * that the framework never re-renders on data — a header that did would
+ * re-render its box, and every widget in it, on every frame.
+ */
+export class BoxHeadElement extends LitElement implements Drawable {
+  static properties = { label: { type: String }, instrument: { type: String } };
+  declare label: string;
+  declare instrument: string;
+  declare store: Store;
+  declare control: Control;
+
+  createRenderRoot() {
+    return this;
+  }
+
+  render() {
+    return html`<span class="box-label">${this.label}</span>
+      <span class="box-state"></span>
+      ${this.instrument ? html`<span class="badge">${this.instrument}</span>` : ""}`;
+  }
+
+  draw() {
+    const state = this.querySelector(".box-state");
+    if (!state) return;
+    if (!this.instrument) {
+      state.textContent = "";
+      return;
+    }
+    const info = this.store.instruments.get(this.instrument);
+    const on = armed(this.store, this.instrument);
+    const holder = String(this.store.latest.get(`${this.instrument}.control.holder`) ?? "");
+    const who = holder ? (this.control.holds(this.instrument) ? `held by ${holder}, yours` : `held by ${holder}`) : "free";
+    state.textContent = [info?.kind, who, on ? "armed" : "not armed"].filter(Boolean).join(" · ");
+    this.classList.toggle("armed", on);
+    this.classList.toggle("unresolved", !info);
   }
 }
 
@@ -586,3 +635,4 @@ customElements.define("ktest-setpoint", SetpointElement);
 customElements.define("ktest-toggle", ToggleElement);
 customElements.define("ktest-lamp", LampElement);
 customElements.define("ktest-control", ControlBarElement);
+customElements.define("ktest-box-head", BoxHeadElement);

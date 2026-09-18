@@ -673,6 +673,17 @@ stays out of the panel: the recording says that in the instrument's own control
 stream, and a panel carrying a second opinion could be wrong. A panel that is one
 flat `widgets` grid stays valid and means a single unnamed box.
 
+**Control is taken for the panel, not an instrument at a time.** The daemon leases
+and arms each instrument on its own (§7) and that does not change: two pages can
+still drive two instruments, and a lease refused is still refused. But a rack is one
+bench in front of one person, so the bar takes every instrument's lease in one press
+and arms them together — and when they do not agree, one held elsewhere or one armed
+and another not, it says how many rather than rounding it off. Each box's header
+carries its own instrument's state: its kind, who holds it, whether it is armed.
+STOP is unchanged, and stays what it always was — everything the daemon drives, no
+lease needed, because a stop that needed the lease would be out of reach exactly
+when the client holding it has hung.
+
 One rule holds this together, stated here because it is easy to lose while making
 the UI prettier: **a widget owns its rendering surface, and the framework never
 re-renders it on data.** Composition is declarative; the data path is not. §10.3 is
@@ -1504,10 +1515,11 @@ opinion rather than the same answer arrived at cheaply.
    bench is used, and it had no way to say that a widget belongs to an
    instrument: the panel was one flat grid, and the control side inferred the
    instruments from whichever widgets happened to write to one. A panel is now a
-   stack of boxes, one to an instrument (§10.1). The box header — the
-   instrument's lease, arming and state, where the mockups put the name badge and
-   the power switch — is the slice after that, and the hardware and the scripting
-   below wait until the rack is finished.
+   stack of boxes, one to an instrument (§10.1), and each box's header says what
+   is true of that instrument: its kind, who holds it, whether it is armed.
+   Taking control and arming are the panel's, beside the stop, rather than each
+   box's — a rack is one bench. The hardware and the scripting below wait until
+   the rack is finished.
 5. **Scripting.** *Superseded (2026-11-19):* the plan is now Ktest's own
    `expr` package, then procedures in a Robot subset; see §9.2 and
    `doc/two-racks-handoff.md`. **Both are built for a single rack**: `ktestd
