@@ -25,7 +25,7 @@ func TestCheckPanel(t *testing.T) {
 		{"a misspelt key", `"step": 0.1`, `"stp": 0.1`, "unknown field"},
 		{"a widget past the grid's edge", `"x": 3, "y": 0, "w": 3`, `"x": 4, "y": 0, "w": 3`, "columns 4 to 6 of a grid of 6"},
 		{"widgets on top of each other", `"x": 0, "y": 2`, `"x": 0, "y": 1`, "overlaps widget 0"},
-		{"a toggle on a voltage", `"type": "setpoint"`, `"type": "toggle"`, "a toggle switches something on or off"},
+		{"a toggle on a voltage", `"type": "setpoint"`, `"type": "toggle"`, "a toggle or a button switches something on or off"},
 		{"a step on a readout", `"h": 2},
 		{"type": "setpoint"`, `"h": 2, "step": 1},
 		{"type": "setpoint"`, "only a setpoint"},
@@ -105,16 +105,59 @@ func TestCheckPanelDials(t *testing.T) {
 		{"a scale that is not an interval", `"min": 0, "max": 30`, `"min": 30, "max": 0`, "a scale from 30 to 0"},
 		{"a scale of no width", `"min": 0, "max": 30`, `"min": 7, "max": 7`, "a scale from 7 to 7"},
 		{"a scale on something with no scale", `{"type": "gauge", "channel": "psu1.ch1.meas.i"`,
-			`{"type": "readout", "min": 1, "max": 2, "channel": "psu1.ch1.meas.i"`, `only a gauge or a knob has a "min"`},
+			`{"type": "readout", "min": 1, "max": 2, "channel": "psu1.ch1.meas.i"`, `only a gauge, a knob or a slider has a "min"`},
 		{"a step on a gauge", `{"type": "gauge", "channel": "psu1.ch1.meas.i"`,
-			`{"type": "gauge", "step": 1, "channel": "psu1.ch1.meas.i"`, `only a setpoint or a knob has a "step"`},
+			`{"type": "gauge", "step": 1, "channel": "psu1.ch1.meas.i"`, `only a setpoint, a knob or a slider has a "step"`},
 		{"a knob on a switch", `"channel": "psu1.ch1.v.set", "min": -5`, `"channel": "psu1.ch1.out.set", "min": -5`,
-			"a toggle switches something on or off"},
+			"a toggle or a button switches something on or off"},
 		{"a knob on something that cannot be set", `"channel": "psu1.ch1.v.set", "min": -5`,
 			`"channel": "psu1.ch1.meas.v", "min": -5`, `a knob writes one "channel" that can be set`},
 		{"a gauge given two channels", `{"type": "gauge", "channel": "psu1.ch1.meas.i"`,
 			`{"type": "gauge", "channels": ["psu1.ch1.meas.i"], "channel": "psu1.ch1.meas.i"`,
 			`a gauge shows one "channel"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bad := strings.Replace(good, tc.from, tc.to, 1)
+			if bad == good {
+				t.Fatalf("the case changed nothing")
+			}
+			err := checkPanel([]byte(bad))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("got %v, want an error naming %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestCheckPanelChoices holds the widgets that write without typing — the
+// slider, the momentary button and the enum — to the rules each brings.
+func TestCheckPanelChoices(t *testing.T) {
+	good := `{"columns": 12, "widgets": [
+		{"type": "slider", "channel": "psu1.ch2.v.set", "min": 0, "max": 6, "step": 0.1, "x": 0, "y": 0, "w": 4, "h": 2},
+		{"type": "button", "channel": "psu1.ch2.out.set", "x": 4, "y": 0, "w": 2, "h": 2},
+		{"type": "enum", "channel": "psu1.ch1.v.set", "options": [
+			{"value": 0, "label": "off"}, {"value": 3.3}, {"value": 5, "label": "logic"}
+		], "x": 6, "y": 0, "w": 3, "h": 2}
+	]}`
+	if err := checkPanel([]byte(good)); err != nil {
+		t.Fatalf("a good panel: %v", err)
+	}
+	for _, tc := range []struct{ name, from, to, want string }{
+		{"a button on a number", `"type": "button", "channel": "psu1.ch2.out.set"`,
+			`"type": "button", "channel": "psu1.ch2.v.set"`, "a toggle or a button switches something on or off"},
+		{"a slider on a switch", `"type": "slider", "channel": "psu1.ch2.v.set"`,
+			`"type": "slider", "channel": "psu1.ch2.out.set"`, "a slider sets a number"},
+		{"an enum with one option", `{"value": 0, "label": "off"}, {"value": 3.3}, {"value": 5, "label": "logic"}`,
+			`{"value": 0, "label": "off"}`, `an enum offers at least two "options"`},
+		{"an enum offering a value twice", `{"value": 3.3}`, `{"value": 5}`, "two options set 5"},
+		{"options on something that is not an enum", `"type": "button", "channel": "psu1.ch2.out.set"`,
+			`"type": "button", "options": [{"value": 1}], "channel": "psu1.ch2.out.set"`, `only an enum has "options"`},
+		{"a scale on a button", `"type": "button", "channel": "psu1.ch2.out.set"`,
+			`"type": "button", "min": 0, "max": 1, "channel": "psu1.ch2.out.set"`,
+			`only a gauge, a knob or a slider has a "min"`},
+		{"a step on an enum", `"type": "enum", "channel": "psu1.ch1.v.set"`,
+			`"type": "enum", "step": 1, "channel": "psu1.ch1.v.set"`, `only a setpoint, a knob or a slider has a "step"`},
+		{"a misspelt key on an option", `{"value": 3.3}`, `{"valu": 3.3}`, "unknown field"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			bad := strings.Replace(good, tc.from, tc.to, 1)

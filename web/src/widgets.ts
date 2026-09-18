@@ -909,6 +909,300 @@ export class KnobElement extends LitElement implements Drawable {
   }
 }
 
+/**
+ * A slider: the same thing a knob is, laid out straight. It suits a value
+ * with a range worth seeing at a glance — where along its travel this one sits
+ * — and it writes on release rather than on every pixel of the drag, so a
+ * drag is one decision in the recording and not two hundred.
+ */
+export class SliderElement extends LitElement implements Drawable {
+  static properties = {
+    channel: { type: String },
+    label: { type: String },
+    step: { type: Number },
+    min: { type: Number },
+    max: { type: Number },
+  };
+  declare channel: string;
+  declare label: string;
+  declare step: number;
+  declare min: number;
+  declare max: number;
+  declare store: Store;
+  declare control: Control;
+
+  /** While the handle is being dragged: where it is, not yet sent. */
+  private moving?: number;
+  private pending?: number;
+  private error = "";
+
+  createRenderRoot() {
+    return this;
+  }
+
+  private ends() {
+    const min = this.min ?? 0;
+    const max = this.max ?? 100;
+    return max > min ? { min, max } : { min, max: min + 1 };
+  }
+
+  private can(): boolean {
+    const inst = instrumentOf(this.channel);
+    return this.control.holds(inst) && armed(this.store, inst);
+  }
+
+  render() {
+    const { min, max } = this.ends();
+    return html`<div class="title">${this.label || this.channel}</div>
+      <div class="value">—</div>
+      <input
+        class="range"
+        type="range"
+        min=${min}
+        max=${max}
+        step=${this.step > 0 ? String(this.step) : "any"}
+        .value=${String(min)}
+        @input=${(e: Event) => {
+          this.moving = Number((e.target as HTMLInputElement).value);
+          this.draw();
+        }}
+        @change=${(e: Event) => {
+          const v = Number((e.target as HTMLInputElement).value);
+          this.moving = undefined;
+          void this.send(v);
+        }}
+      />
+      <div class="detail"></div>`;
+  }
+
+  private async send(v: number) {
+    this.pending = v;
+    this.error = "";
+    this.draw();
+    const a = await this.control.write(this.channel, v);
+    if (!a.ok) {
+      this.pending = undefined;
+      this.error = a.error ?? `HTTP ${a.status}`;
+    }
+    this.draw();
+  }
+
+  draw() {
+    const value = this.querySelector(".value");
+    const detail = this.querySelector(".detail");
+    const input = this.querySelector<HTMLInputElement>(".range");
+    if (!value || !detail || !input) return;
+    const info = this.store.channels.get(appliedOf(this.channel));
+    const set = this.store.latest.get(this.channel);
+    const applied = this.store.latest.get(appliedOf(this.channel));
+    if (this.pending !== undefined && set === this.pending) this.pending = undefined;
+    const unit = info?.unit ?? "";
+    const held = typeof applied === "number" ? applied : undefined;
+    const shown = this.moving ?? this.pending ?? held;
+    // The handle follows the instrument, except while a hand is on it: moving
+    // it under the hand that is dragging it would fight the person using it.
+    if (this.moving === undefined && shown !== undefined) input.value = String(shown);
+
+    const differs = typeof set === "number" && held !== undefined && Math.abs(set - held) > 1e-9;
+    value.textContent = shown === undefined ? "—" : `${format(shown)} ${unit}`;
+    let d = info ? `set ${format(set)} ${set === undefined ? "" : unit}` : "no such channel yet";
+    if (this.moving !== undefined) d = `moving to ${format(this.moving)} ${unit}`;
+    else if (this.pending !== undefined) d = `sending ${format(this.pending)} ${unit}…`;
+    else if (this.error) d = this.error;
+    else if (differs) d += ` · the instrument holds ${format(held)} ${unit}`;
+    detail.textContent = d;
+
+    const busy = this.moving !== undefined || this.pending !== undefined;
+    this.classList.toggle("unresolved", !info);
+    this.classList.toggle("pending", busy);
+    this.classList.toggle("refused", this.error !== "");
+    this.classList.toggle("differs", differs && !busy);
+    input.disabled = !this.can();
+  }
+}
+
+/**
+ * A momentary button: on while it is held, off when it is let go. It is the
+ * widget for something that must not stay on by itself — a hold-to-run, an
+ * output that should follow a finger.
+ *
+ * So the release matters more than the press, and every way of letting go is
+ * one: the pointer up, the pointer leaving, the pointer cancelled, the key
+ * released, the button losing focus, the page being hidden. A press that
+ * cannot be released is exactly the failure this widget must not have. It is
+ * still not an interlock — the daemon's arming and the stop are (§7) — because
+ * a browser that dies holds nothing, and a bench must not depend on one.
+ */
+export class MomentaryElement extends LitElement implements Drawable {
+  static properties = { channel: { type: String }, label: { type: String } };
+  declare channel: string;
+  declare label: string;
+  declare store: Store;
+  declare control: Control;
+
+  /** What this widget last asked for, so that a release is sent once. */
+  private held = false;
+  private busy = false;
+  private error = "";
+
+  createRenderRoot() {
+    return this;
+  }
+
+  private can(): boolean {
+    const inst = instrumentOf(this.channel);
+    return this.control.holds(inst) && armed(this.store, inst);
+  }
+
+  render() {
+    return html`<div class="title">${this.label || this.channel}</div>
+      <button class="press">HOLD</button>
+      <div class="detail"></div>`;
+  }
+
+  firstUpdated() {
+    const b = this.querySelector<HTMLButtonElement>(".press");
+    if (!b) return;
+    b.addEventListener("pointerdown", (e) => {
+      b.setPointerCapture(e.pointerId);
+      void this.set(true);
+    });
+    for (const ev of ["pointerup", "pointercancel", "pointerleave", "blur"] as const) {
+      b.addEventListener(ev, () => void this.set(false));
+    }
+    b.addEventListener("keydown", (e) => {
+      if ((e.key === " " || e.key === "Enter") && !e.repeat) void this.set(true);
+    });
+    b.addEventListener("keyup", (e) => {
+      if (e.key === " " || e.key === "Enter") void this.set(false);
+    });
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) void this.set(false);
+    });
+  }
+
+  /** set asks for on or off once. A release is sent even when a press would not be allowed. */
+  private async set(on: boolean) {
+    if (on && !this.can()) return;
+    if (this.held === on) return;
+    this.held = on;
+    this.busy = true;
+    this.error = "";
+    this.draw();
+    const a = await this.control.write(this.channel, on);
+    this.busy = false;
+    if (!a.ok) {
+      this.error = a.error ?? `HTTP ${a.status}`;
+      if (on) this.held = false;
+    }
+    this.draw();
+  }
+
+  draw() {
+    const button = this.querySelector<HTMLButtonElement>(".press");
+    const detail = this.querySelector(".detail");
+    if (!button || !detail) return;
+    const info = this.store.channels.get(appliedOf(this.channel));
+    const applied = this.store.latest.get(appliedOf(this.channel));
+    const on = applied === true;
+    button.classList.toggle("on", on);
+    let d = info ? (on ? "the instrument reports on" : "off") : "no such channel yet";
+    if (this.busy) d = this.held ? "pressing…" : "releasing…";
+    else if (this.error) d = this.error;
+    else if (this.held !== on) d = this.held ? "held, waiting for the instrument" : `let go, and the instrument reports ${on ? "on" : "off"}`;
+    detail.textContent = d;
+    this.classList.toggle("unresolved", !info);
+    this.classList.toggle("pending", this.busy);
+    this.classList.toggle("refused", this.error !== "");
+    this.classList.toggle("differs", !this.busy && this.held !== on);
+    button.disabled = !this.can() && !this.held;
+  }
+}
+
+/**
+ * An enum selector: a few values worth naming, and nothing else offered. A
+ * timebase of 1 ms, a range, a mode. The instrument may hold something that is
+ * not on the list — it was set from elsewhere, or clamped — and the list does
+ * not hide that: the selector shows no choice, and says what is held.
+ */
+export class EnumElement extends LitElement implements Drawable {
+  static properties = { channel: { type: String }, label: { type: String }, options: { type: Array } };
+  declare channel: string;
+  declare label: string;
+  declare options: { value: number; label?: string }[];
+  declare store: Store;
+  declare control: Control;
+
+  private pending?: number;
+  private error = "";
+
+  createRenderRoot() {
+    return this;
+  }
+
+  private can(): boolean {
+    const inst = instrumentOf(this.channel);
+    return this.control.holds(inst) && armed(this.store, inst);
+  }
+
+  render() {
+    return html`<div class="title">${this.label || this.channel}</div>
+      <select
+        class="choice"
+        @change=${(e: Event) => {
+          const v = (e.target as HTMLSelectElement).value;
+          if (v !== "") void this.send(Number(v));
+        }}
+      >
+        <option value="">—</option>
+        ${(this.options ?? []).map((o) => html`<option value=${String(o.value)}>${o.label || format(o.value)}</option>`)}
+      </select>
+      <div class="detail"></div>`;
+  }
+
+  private async send(v: number) {
+    this.pending = v;
+    this.error = "";
+    this.draw();
+    const a = await this.control.write(this.channel, v);
+    if (!a.ok) {
+      this.pending = undefined;
+      this.error = a.error ?? `HTTP ${a.status}`;
+    }
+    this.draw();
+  }
+
+  draw() {
+    const select = this.querySelector<HTMLSelectElement>(".choice");
+    const detail = this.querySelector(".detail");
+    if (!select || !detail) return;
+    const info = this.store.channels.get(appliedOf(this.channel));
+    const set = this.store.latest.get(this.channel);
+    const applied = this.store.latest.get(appliedOf(this.channel));
+    if (this.pending !== undefined && set === this.pending) this.pending = undefined;
+    const unit = info?.unit ?? "";
+    const held = typeof applied === "number" ? applied : undefined;
+    const shown = this.pending ?? held;
+    // A value the list does not offer is shown as no choice at all, never as
+    // the nearest one: a selector that rounded would be saying the instrument
+    // holds something it does not.
+    const match = shown === undefined ? undefined : (this.options ?? []).find((o) => Math.abs(o.value - shown) < 1e-9);
+    select.value = match ? String(match.value) : "";
+    const differs = typeof set === "number" && held !== undefined && Math.abs(set - held) > 1e-9;
+    let d = info ? `set ${format(set)} ${set === undefined ? "" : unit}` : "no such channel yet";
+    if (this.pending !== undefined) d = `sending ${format(this.pending)} ${unit}…`;
+    else if (this.error) d = this.error;
+    else if (differs) d += ` · the instrument holds ${format(held)} ${unit}`;
+    else if (shown !== undefined && !match) d = `the instrument holds ${format(shown)} ${unit}, which is not on the list`;
+    detail.textContent = d;
+    this.classList.toggle("unresolved", !info);
+    this.classList.toggle("pending", this.pending !== undefined);
+    this.classList.toggle("refused", this.error !== "");
+    this.classList.toggle("differs", differs && this.pending === undefined);
+    select.disabled = !this.can();
+  }
+}
+
 customElements.define("ktest-readout", ReadoutElement);
 customElements.define("ktest-plot", PlotElement);
 customElements.define("ktest-scope", ScopeElement);
@@ -920,3 +1214,6 @@ customElements.define("ktest-control", ControlBarElement);
 customElements.define("ktest-box-head", BoxHeadElement);
 customElements.define("ktest-gauge", GaugeElement);
 customElements.define("ktest-knob", KnobElement);
+customElements.define("ktest-slider", SliderElement);
+customElements.define("ktest-button", MomentaryElement);
+customElements.define("ktest-enum", EnumElement);

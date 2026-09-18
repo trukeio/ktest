@@ -11,10 +11,10 @@ import {
   accepts,
   columnsOf,
   columnsOfGroup,
-  dial,
   groupsOf,
   problems,
   scaleOf,
+  scaled,
   stepped,
   type Group,
   type Panel,
@@ -338,7 +338,53 @@ export class EditorElement extends LitElement {
               }}
           /></label>`
         : nothing}
-      ${dial(w.type)
+      ${w.type === "enum"
+        ? html`<label>Options</label>
+            ${(w.options ?? []).map(
+              (o, k) =>
+                html`<div class="row">
+                  <input
+                    type="number"
+                    step="any"
+                    .value=${String(o.value)}
+                    @change=${(e: Event) => {
+                      o.value = Number(val(e));
+                      this.app.changed();
+                    }}
+                  />
+                  <input
+                    placeholder="what it is called"
+                    .value=${o.label ?? ""}
+                    @change=${(e: Event) => {
+                      o.label = val(e) || undefined;
+                      this.app.changed();
+                    }}
+                  />
+                  <button
+                    title="Stop offering this value"
+                    @click=${() => {
+                      w.options!.splice(k, 1);
+                      this.app.changed();
+                    }}
+                  >
+                    ✕
+                  </button>
+                </div>`,
+            )}
+            <input
+              type="number"
+              step="any"
+              placeholder="add a value"
+              @change=${(e: Event) => {
+                const t = e.target as HTMLInputElement;
+                if (t.value.trim() === "") return;
+                (w.options ??= []).push({ value: Number(t.value) });
+                t.value = "";
+                this.app.changed();
+              }}
+            />`
+        : nothing}
+      ${scaled(w.type)
         ? html`<div class="row">
             <label
               >Scale from

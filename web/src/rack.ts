@@ -13,9 +13,9 @@ import type { Control } from "./control.ts";
 import type { Drawable } from "./widgets.ts";
 import {
   columnsOfGroup,
-  dial,
   groupsOf,
   scaleOf,
+  scaled,
   stepped,
   type Group,
   type Panel,
@@ -32,6 +32,9 @@ const TAGS = {
   lamp: "ktest-lamp",
   gauge: "ktest-gauge",
   knob: "ktest-knob",
+  slider: "ktest-slider",
+  button: "ktest-button",
+  enum: "ktest-enum",
 } as const;
 
 /** One grid row, in pixels: 64 for the widget and 8 between rows, as the rack has always been. */
@@ -175,7 +178,8 @@ export class Rack {
     if (stepped(w.type)) Object.assign(el, { step: w.step ?? 0 });
     // The scale is resolved here rather than in the widget, so that the file's
     // silence means one thing in one place.
-    if (dial(w.type)) Object.assign(el, scaleOf(w));
+    if (scaled(w.type)) Object.assign(el, scaleOf(w));
+    if (w.type === "enum") Object.assign(el, { options: w.options ?? [] });
     return el;
   }
 }

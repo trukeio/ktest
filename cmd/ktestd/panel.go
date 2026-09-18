@@ -84,15 +84,29 @@ type widget struct {
 	Label    string   `json:"label"`
 	Channel  string   `json:"channel"`
 	Channels []string `json:"channels"`
-	Window   float64  `json:"window"` // plot: seconds shown
-	Step     float64  `json:"step"`   // setpoint and knob: the step it moves in; 0 for any
-	Min      float64  `json:"min"`    // gauge and knob: the ends of the scale;
-	Max      float64  `json:"max"`    // both unsaid means 0 to 100
+	Window   float64  `json:"window"`  // plot: seconds shown
+	Step     float64  `json:"step"`    // setpoint, knob and slider: the step it moves in; 0 for any
+	Min      float64  `json:"min"`     // gauge, knob and slider: the ends of the scale;
+	Max      float64  `json:"max"`     // both unsaid means 0 to 100
+	Options  []option `json:"options"` // enum: the values it offers
 	X        int      `json:"x"`
 	Y        int      `json:"y"`
 	W        int      `json:"w"`
 	H        int      `json:"h"`
 }
+
+// An option is one choice an enum offers: the value it sets, and what it is
+// called on screen. A value without a label is shown as the number it is.
+type option struct {
+	Value float64 `json:"value"`
+	Label string  `json:"label"`
+}
+
+// hasStep and hasScale are the widgets those belong to. A key on a widget that
+// has no use for it is refused rather than ignored, for the same reason a
+// misspelt key is: it was meant to do something, and it would do nothing.
+func hasStep(t string) bool  { return t == "setpoint" || t == "knob" || t == "slider" }
+func hasScale(t string) bool { return t == "gauge" || t == "knob" || t == "slider" }
 
 // loadPanel reads and checks a panel file, and returns it as given: the bytes
 // the browser is served and the recording embeds are the file, not a
@@ -216,39 +230,56 @@ func checkWidgets(ws []widget, cols int, in string) error {
 			if w.Channel == "" || len(w.Channels) > 0 || !scopeChannel.MatchString(w.Channel) {
 				return fmt.Errorf(`%s: a scope draws one "channel", a scope channel such as scope1.ch1`, where)
 			}
-		case "setpoint", "toggle", "knob":
+		case "setpoint", "toggle", "knob", "slider", "button", "enum":
 			// These write, so their channel must be one that can be written,
-			// and of the right kind: a toggle switches something on or off, a
-			// setpoint or a knob sets a number.
+			// and of the right kind: a toggle and a button switch something on
+			// or off, the rest set a number.
 			cn, err := parseChannel(w.Channel)
 			if err != nil || len(w.Channels) > 0 {
 				return fmt.Errorf(`%s: a %s writes one "channel" that can be set, such as psu1.ch1.v.set`, where, w.Type)
 			}
-			if (w.Type == "toggle") != isSwitch(cn.what) {
-				return fmt.Errorf("%s: a toggle switches something on or off, such as out.set or on.set, and a "+
-					"%s sets a number; %s is neither", where, w.Type, w.Channel)
+			if (w.Type == "toggle" || w.Type == "button") != isSwitch(cn.what) {
+				return fmt.Errorf("%s: a toggle or a button switches something on or off, such as out.set or "+
+					"on.set, and a %s sets a number; %s is neither", where, w.Type, w.Channel)
 			}
 			if w.Step < 0 {
 				return fmt.Errorf("%s: a step of %g", where, w.Step)
+			}
+			if w.Type == "enum" {
+				// One choice is not a choice, and two choices that set the
+				// same value are one of them twice.
+				if len(w.Options) < 2 {
+					return fmt.Errorf(`%s: an enum offers at least two "options"`, where)
+				}
+				seen := map[float64]bool{}
+				for _, o := range w.Options {
+					if seen[o.Value] {
+						return fmt.Errorf("%s: two options set %g", where, o.Value)
+					}
+					seen[o.Value] = true
+				}
 			}
 		case "lamp":
 			if w.Channel == "" || len(w.Channels) > 0 {
 				return fmt.Errorf(`%s: a lamp shows one "channel"`, where)
 			}
 		default:
-			return fmt.Errorf(`%s: no widget type %q; there are "readout", "gauge", "plot", "scope", `+
-				`"setpoint", "knob", "toggle" and "lamp"`, where, w.Type)
+			return fmt.Errorf(`%s: no widget type %q; there are "readout", "gauge", "plot", "scope", "setpoint", `+
+				`"knob", "slider", "enum", "toggle", "button" and "lamp"`, where, w.Type)
 		}
-		if w.Step != 0 && w.Type != "setpoint" && w.Type != "knob" {
-			return fmt.Errorf(`%s: only a setpoint or a knob has a "step"`, where)
+		if w.Step != 0 && !hasStep(w.Type) {
+			return fmt.Errorf(`%s: only a setpoint, a knob or a slider has a "step"`, where)
+		}
+		if len(w.Options) > 0 && w.Type != "enum" {
+			return fmt.Errorf(`%s: only an enum has "options"`, where)
 		}
 		// A scale belongs to the widgets that draw one, and must be an
 		// interval: a needle on a scale of no width says nothing, and would
-		// divide by zero saying it. Both ends unsaid is the 0 to 100 a dial
+		// divide by zero saying it. Both ends unsaid is the 0 to 100 a scale
 		// falls back to.
 		if w.Min != 0 || w.Max != 0 {
-			if w.Type != "gauge" && w.Type != "knob" {
-				return fmt.Errorf(`%s: only a gauge or a knob has a "min" and a "max"`, where)
+			if !hasScale(w.Type) {
+				return fmt.Errorf(`%s: only a gauge, a knob or a slider has a "min" and a "max"`, where)
 			}
 			if w.Max <= w.Min {
 				return fmt.Errorf("%s: a scale from %g to %g", where, w.Min, w.Max)

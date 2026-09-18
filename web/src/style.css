@@ -546,6 +546,62 @@ ktest-knob:focus-visible {
   outline-offset: -1px;
 }
 
+ktest-slider .range {
+  width: 100%;
+  margin: 8px 0 4px;
+  accent-color: var(--live);
+}
+ktest-slider.pending .range {
+  accent-color: var(--warn);
+}
+ktest-slider.differs .range {
+  accent-color: var(--bad);
+}
+ktest-slider .value,
+ktest-enum .value {
+  font-size: 24px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+ktest-slider .detail,
+ktest-button .detail,
+ktest-enum .detail {
+  color: var(--dim);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Held, not latched: it says HOLD, and it is only on while it is pressed. */
+ktest-button .press {
+  margin: 6px 0;
+  font-size: 16px;
+  font-weight: 600;
+  align-self: flex-start;
+  min-width: 72px;
+  touch-action: none;
+  user-select: none;
+}
+ktest-button .press.on {
+  background: var(--live);
+  border-color: var(--live);
+  color: #fff;
+}
+
+ktest-enum .choice {
+  margin: 6px 0;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 4px 6px;
+  font: inherit;
+}
+ktest-enum .choice:disabled {
+  opacity: 0.4;
+}
+
 ktest-lamp .row {
   display: flex;
   align-items: center;

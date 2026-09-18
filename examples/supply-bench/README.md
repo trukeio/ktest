@@ -33,6 +33,21 @@ Then:
   worth asking for, and enforces nothing.
 - ch1 voltage 20, typed into **ch1 voltage, typed**: refused — `limits.json`
   caps ch1 at 12 V, and the refusal is in the recording with everything else.
+- **ch1 preset** offers four values worth naming and nothing else. Pick *3V3
+  logic* and the knob moves with it, since both are bound to the same channel
+  and both read it back from the recording rather than from each other. Turn
+  the knob to something off the list and the preset shows no choice at all,
+  and says what is held: a selector that rounded to the nearest entry would be
+  claiming the supply holds a value it does not.
+- **ch2 voltage** is a slider — the same thing the knob is, laid out straight.
+  It sends on release, not on every pixel, so a drag is one decision in the
+  recording rather than two hundred.
+- **ch2 output, while held** is momentary: on while the mouse is down or the
+  space bar is held, off the moment it is let go — and off too if the pointer
+  leaves it, the window loses focus or the tab is hidden, because a press that
+  cannot be released is the failure this widget must not have. It is still not
+  an interlock: the arming and STOP are (§7), since a browser that dies holds
+  nothing.
 - ch2 voltage 12: shown as set 12 V, held 6 V — the channel is rated 6 V and the
   supply clamps it.
 - **STOP**: every instrument disarmed, every output off.

@@ -6,7 +6,24 @@
 // instrument, each its own grid. Widget coordinates belong to the grid they
 // are in, so a box can be moved without rewriting what is under it.
 
-export type WidgetType = "readout" | "plot" | "scope" | "setpoint" | "toggle" | "lamp" | "gauge" | "knob";
+export type WidgetType =
+  | "readout"
+  | "plot"
+  | "scope"
+  | "setpoint"
+  | "toggle"
+  | "lamp"
+  | "gauge"
+  | "knob"
+  | "slider"
+  | "button"
+  | "enum";
+
+/** One choice an enum offers: the value it sets, and what it is called. */
+export interface Option {
+  value: number;
+  label?: string;
+}
 
 export interface WidgetSpec {
   type: WidgetType;
@@ -15,9 +32,11 @@ export interface WidgetSpec {
   channels?: string[];
   window?: number;
   step?: number;
-  /** gauge and knob: the ends of the scale. Both unsaid means 0 to 100. */
+  /** gauge, knob and slider: the ends of the scale. Both unsaid means 0 to 100. */
   min?: number;
   max?: number;
+  /** enum: the values it offers. */
+  options?: Option[];
   x: number;
   y: number;
   w: number;
@@ -46,7 +65,19 @@ export interface Pick {
   i: number;
 }
 
-export const TYPES: WidgetType[] = ["readout", "gauge", "plot", "scope", "setpoint", "knob", "toggle", "lamp"];
+export const TYPES: WidgetType[] = [
+  "readout",
+  "gauge",
+  "plot",
+  "scope",
+  "setpoint",
+  "knob",
+  "slider",
+  "enum",
+  "toggle",
+  "button",
+  "lamp",
+];
 
 /** The size a new widget starts at, in grid cells. */
 export const SIZE: Record<WidgetType, { w: number; h: number }> = {
@@ -58,9 +89,12 @@ export const SIZE: Record<WidgetType, { w: number; h: number }> = {
   lamp: { w: 2, h: 1 },
   gauge: { w: 3, h: 3 },
   knob: { w: 2, h: 3 },
+  slider: { w: 4, h: 2 },
+  button: { w: 2, h: 2 },
+  enum: { w: 3, h: 2 },
 };
 
-/** The ends of a dial's scale, as it is drawn: both unsaid means 0 to 100. */
+/** The ends of a scale, as it is drawn: both unsaid means 0 to 100. */
 export function scaleOf(w: { min?: number; max?: number }): { min: number; max: number } {
   const min = w.min ?? 0;
   const max = w.max ?? 0;
@@ -98,17 +132,22 @@ export function normalize(p: Panel): Panel {
 
 /** writes says whether a widget sets its channel rather than showing it. */
 export function writes(t: WidgetType): boolean {
-  return t === "setpoint" || t === "toggle" || t === "knob";
+  return t === "setpoint" || t === "toggle" || t === "knob" || t === "slider" || t === "button" || t === "enum";
 }
 
-/** dial says whether a widget draws its channel on a scale, and so has one. */
-export function dial(t: WidgetType): boolean {
-  return t === "gauge" || t === "knob";
+/** switches says whether a widget works a channel that is on or off rather than a number. */
+export function switches(t: WidgetType): boolean {
+  return t === "toggle" || t === "button";
+}
+
+/** scaled says whether a widget draws its channel between two ends, and so has them. */
+export function scaled(t: WidgetType): boolean {
+  return t === "gauge" || t === "knob" || t === "slider";
 }
 
 /** stepped says whether a widget's value moves in steps a person picks. */
 export function stepped(t: WidgetType): boolean {
-  return t === "setpoint" || t === "knob";
+  return t === "setpoint" || t === "knob" || t === "slider";
 }
 
 // A channel that can be set, as ktestd's parseChannel names one: the
@@ -117,7 +156,7 @@ export function stepped(t: WidgetType): boolean {
 // is a channel, a scope's is ch1.vert or timebase.
 const SETTABLE = /^([^.]+)\.(.+)\.([^.]+)\.set$/;
 
-/** A quantity that is a switch rather than a number, and so a toggle's. */
+/** A quantity that is a switch rather than a number, and so a toggle's or a button's. */
 const SWITCHES = ["out", "on"];
 
 /** A scope channel, which is what a scope widget draws: scope1.ch1. */
@@ -132,8 +171,7 @@ export function instrumentOf(channel: string): string {
 export function accepts(t: WidgetType, c: string): boolean {
   if (c === "") return false;
   const m = SETTABLE.exec(c);
-  if (t === "setpoint" || t === "knob") return m !== null && !SWITCHES.includes(m[3]);
-  if (t === "toggle") return m !== null && SWITCHES.includes(m[3]);
+  if (writes(t)) return m !== null && SWITCHES.includes(m[3]) === switches(t);
   if (t === "scope") return WAVEFORM.test(c);
   return true;
 }
@@ -195,24 +233,40 @@ export function problems(p: Panel): Problem[] {
           break;
         case "setpoint":
         case "knob":
+        case "slider":
           if (!accepts(w.type, w.channel ?? "")) {
             say(`a ${w.type} sets a channel such as psu1.ch1.v.set or scope1.timebase.tdiv.set`);
           }
           if ((w.step ?? 0) < 0) say("a step cannot be negative");
           break;
+        case "enum":
+          if (!accepts(w.type, w.channel ?? "")) say("an enum sets a channel such as psu1.ch1.v.set");
+          if ((w.options ?? []).length < 2) say("an enum offers at least two options");
+          else {
+            const seen = new Set<number>();
+            for (const o of w.options ?? []) {
+              if (!Number.isFinite(o.value)) say("an option sets a number");
+              else if (seen.has(o.value)) say(`two options set ${o.value}`);
+              seen.add(o.value);
+            }
+          }
+          break;
         case "toggle":
-          if (!accepts(w.type, w.channel ?? "")) say("a toggle switches something, such as psu1.ch1.out.set");
+        case "button":
+          if (!accepts(w.type, w.channel ?? "")) say(`a ${w.type} switches something, such as psu1.ch1.out.set`);
           break;
         default:
           if (!w.channel) say(`a ${w.type} needs a channel`);
       }
       // The scale, held exactly as the daemon holds it: both ends unsaid is
-      // the 0 to 100 a dial falls back to, and anything else must be an
+      // the 0 to 100 a scale falls back to, and anything else must be an
       // interval, since a needle on a scale of no width says nothing.
       if ((w.min ?? 0) !== 0 || (w.max ?? 0) !== 0) {
-        if (!dial(w.type)) say("only a gauge or a knob has a scale");
+        if (!scaled(w.type)) say("only a gauge, a knob or a slider has a scale");
         else if (!((w.max ?? 0) > (w.min ?? 0))) say(`a scale from ${w.min ?? 0} to ${w.max ?? 0}`);
       }
+      if ((w.options ?? []).length > 0 && w.type !== "enum") say("only an enum has options");
+      if ((w.step ?? 0) !== 0 && !stepped(w.type)) say("only a setpoint, a knob or a slider has a step");
       // A box that names an instrument and holds another's widget is a
       // contradiction inside the file, which the daemon refuses too.
       if (g.instrument) {
@@ -270,9 +324,10 @@ function line(w: WidgetSpec): string {
   else o.push(["channel", w.channel ?? ""]);
   if (w.label) o.push(["label", w.label]);
   if (w.type === "plot" && w.window) o.push(["window", w.window]);
+  if (w.type === "enum") o.push(["options", w.options ?? []]);
   if (stepped(w.type) && w.step) o.push(["step", w.step]);
-  if (dial(w.type) && w.min) o.push(["min", w.min]);
-  if (dial(w.type) && w.max) o.push(["max", w.max]);
+  if (scaled(w.type) && w.min) o.push(["min", w.min]);
+  if (scaled(w.type) && w.max) o.push(["max", w.max]);
   o.push(["x", w.x], ["y", w.y], ["w", w.w], ["h", w.h]);
   const value = (v: unknown) => (Array.isArray(v) ? `[${v.map((x) => JSON.stringify(x)).join(", ")}]` : JSON.stringify(v));
   return `{${o.map(([k, v]) => `"${k}": ${value(v)}`).join(", ")}}`;
