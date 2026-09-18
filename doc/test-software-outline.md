@@ -814,6 +814,23 @@ So the daemon MUST NOT read the absence of an overflow signal as evidence of no
 loss. A run has to be closed by something that knows it ended — a frame count, a
 heartbeat that stops arriving — and never by the receive path merely going quiet.
 
+### 10.6 Deferred
+
+Not built, deliberately, and written down so that they stay decisions rather than
+becoming omissions:
+
+- **The trace table**, the last of §10.1's widget set. It is the one widget that
+  shows a stream rather than a value — a bus's frames as they arrive, decoded —
+  and so the one that needs a windowing story of its own rather than a channel
+  binding. Nothing on the bench needs it yet.
+- **Dragging a widget from one box into another.** A widget changes boxes today
+  by being removed and added again. gridstack can hand items between grids; the
+  work is wiring that to the panel's groups and to the save.
+- **Per-instrument control.** Taking control and arming are the panel's (§10.1),
+  and a box's header shows state and offers no buttons. A bench that needed one
+  instrument armed while another stayed disarmed would bring this back. None
+  does.
+
 ## 11. Provenance
 
 The daemon knows things nobody remembers to record. Written automatically into the
@@ -1518,8 +1535,11 @@ opinion rather than the same answer arrived at cheaply.
    stack of boxes, one to an instrument (§10.1), and each box's header says what
    is true of that instrument: its kind, who holds it, whether it is armed.
    Taking control and arming are the panel's, beside the stop, rather than each
-   box's — a rack is one bench. The hardware and the scripting below wait until
-   the rack is finished.
+   box's — a rack is one bench. §10.1's widget set is complete but for the trace
+   table (§10.6): gauge, knob, slider, momentary button and enum selector are
+   built, so a panel can be laid out for an instrument without writing a widget
+   for it. **The rack is finished, and what is left of this milestone waits on
+   the instrument** — the scope on the bench, and the CAN interface with it.
 5. **Scripting.** *Superseded (2026-11-19):* the plan is now Ktest's own
    `expr` package, then procedures in a Robot subset; see §9.2 and
    `doc/two-racks-handoff.md`. **Both are built for a single rack**: `ktestd
