@@ -26,7 +26,8 @@ pointed at a supply rail and believed.
 
 ## Two instruments, two leases
 
-The panel has both in front of you, and they are governed apart:
+The panel has both in front of you, one box to an instrument — the supply's
+widgets in the upper box, the scope's below it — and they are governed apart:
 
 - **Take control** of the supply, **Arm** it, and the supply's widgets unlock —
   the scope's do not. Each instrument has its own lease and its own arming

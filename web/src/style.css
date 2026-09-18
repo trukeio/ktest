@@ -238,6 +238,63 @@ button.danger {
   }
 }
 
+/* An instrument's box: the stack of these is the rack (§10.1). The strip
+   carries what the box is called and the instrument it is for; its lease and
+   arming belong here and are not here yet. */
+.instrument {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 6px 10px 10px;
+  margin-bottom: 12px;
+}
+.instrument:last-child {
+  margin-bottom: 0;
+}
+.instrument > .box-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 2px 6px;
+}
+.instrument > .box-head > .box-label {
+  color: var(--dim);
+  font-size: 12px;
+  font-weight: 600;
+}
+.instrument > .box-head > .badge {
+  margin-left: auto;
+  background: var(--line);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 1px 8px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.editing .instrument {
+  border-style: dashed;
+}
+
+ktest-editor .boxes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+ktest-editor .row.box {
+  align-items: center;
+}
+ktest-editor .row.box > .pick {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+ktest-editor .row.box.picked > .pick {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
 .widget {
   display: flex;
   flex-direction: column;

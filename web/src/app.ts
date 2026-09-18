@@ -9,7 +9,7 @@ import { LitElement, html, nothing } from "lit";
 import { Store } from "./store.ts";
 import { Control } from "./control.ts";
 import { Rack } from "./rack.ts";
-import { format, instrumentsOf, plottedOf, type Panel } from "./panel.ts";
+import { format, instrumentsOf, normalize, plottedOf, type Panel, type Pick } from "./panel.ts";
 import type { Drawable } from "./widgets.ts";
 import type { EditorElement, EditorHost } from "./editor.ts";
 import "./widgets.ts";
@@ -38,7 +38,8 @@ export class AppElement extends LitElement implements EditorHost {
   /** While editing: the draft, the sha256 of the panel it began from, and the widget picked. */
   private draft?: Panel;
   private base = "";
-  private selected = -1;
+  /** The widget being edited: its box and its place in it, or null for none. */
+  private selected: Pick | null = null;
   /** A save sent and not yet carried by the stream: the text sent. */
   private saving?: string;
   /** A panel someone else saved while this page was editing. */
@@ -94,8 +95,8 @@ export class AppElement extends LitElement implements EditorHost {
     await this.updateComplete;
 
     this.rack = new Rack(this.querySelector<HTMLElement>(".grid-host")!, this.store, this.control);
-    this.rack.onSelect = (i) => this.select(i);
-    this.rack.onRemove = (i) => this.removeWidget(i);
+    this.rack.onSelect = (pick) => this.select(pick);
+    this.rack.onRemove = (pick) => this.removeWidget(pick);
     this.rack.onMove = () => this.editor()?.requestUpdate();
     this.layout();
     requestAnimationFrame(this.frame);
@@ -183,9 +184,11 @@ export class AppElement extends LitElement implements EditorHost {
   }
 
   private edit() {
-    this.draft = structuredClone(this.held?.panel ?? { widgets: [] });
+    // The draft is always boxes, whatever shape the file is in; format()
+    // writes a single unnamed box back as the bare grid it came from.
+    this.draft = normalize(structuredClone(this.held?.panel ?? { widgets: [] }));
     this.base = this.held?.sha ?? "";
-    this.selected = -1;
+    this.selected = null;
     this.newer = undefined;
     this.editing = true;
     this.layout();
@@ -193,14 +196,14 @@ export class AppElement extends LitElement implements EditorHost {
 
   private stopEditing() {
     this.draft = this.saving = this.newer = undefined;
-    this.selected = -1;
+    this.selected = null;
     this.editing = false;
     this.layout();
   }
 
   // EditorHost: what the editor, and the rack while editing, ask of the page.
 
-  changed(select?: number) {
+  changed(select?: Pick | null) {
     if (select !== undefined) this.selected = select;
     this.layout();
     this.requestUpdate();
@@ -211,16 +214,20 @@ export class AppElement extends LitElement implements EditorHost {
     }
   }
 
-  select(i: number) {
-    this.selected = i;
-    this.rack?.select(i);
+  select(pick: Pick | null) {
+    this.selected = pick;
+    this.rack?.select(pick);
     const ed = this.editor();
-    if (ed) ed.selected = i;
+    if (ed) {
+      ed.selected = pick;
+      if (pick) ed.group = pick.g;
+      ed.requestUpdate();
+    }
   }
 
-  removeWidget(i: number) {
-    this.draft?.widgets.splice(i, 1);
-    this.changed(-1);
+  removeWidget(pick: Pick) {
+    this.draft?.groups?.[pick.g]?.widgets.splice(pick.i, 1);
+    this.changed(null);
   }
 
   async save() {

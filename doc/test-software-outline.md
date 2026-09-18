@@ -655,6 +655,24 @@ enum selector, state lamp, gauge, trace table.
 An "instrument widget" is then a *composition* declared in configuration, not new
 code. A supply panel is a layout over nine channels, not a class.
 
+**Widgets are grouped by instrument, and the grouping is stated rather than
+inferred.** A panel is a stack of boxes, each its own grid: `groups`, drawn in the
+order given, each naming the `instrument` it is for, with a widget's `x` and `y`
+belonging to its box rather than to the panel — so a box moves up or down without
+rewriting the coordinates of everything under it. That is what a rack looks like
+when it is made of instruments rather than of widgets, and what the panels in
+`doc/panel-example-1.png` and `doc/panel-example-2.png` are.
+
+Two things follow from a box naming its instrument. The lease and the arming have
+somewhere to live — on the box, beside its name, where those mockups put the badge
+and the power switch — rather than in a bar built from whichever widgets happen to
+write, which missed an instrument shown only through readouts. And a widget bound to
+another instrument's channel becomes a contradiction the daemon can refuse, since it
+is checkable without knowing which streams exist. What *kind* of instrument it is
+stays out of the panel: the recording says that in the instrument's own control
+stream, and a panel carrying a second opinion could be wrong. A panel that is one
+flat `widgets` grid stays valid and means a single unnamed box.
+
 One rule holds this together, stated here because it is easy to lose while making
 the UI prettier: **a widget owns its rendering surface, and the framework never
 re-renders it on data.** Composition is declarative; the data path is not. §10.3 is
@@ -1482,6 +1500,14 @@ opinion rather than the same answer arrived at cheaply.
    when it has won the bus. And the source of DSD TECH's own changes is not
    published. On the same bus as the MCP2518FD, it shows what the crystal and
    the transmit event FIFO buy.
+   **Slice 3 waits on the UI as well as on the instrument.** The rack is where a
+   bench is used, and it had no way to say that a widget belongs to an
+   instrument: the panel was one flat grid, and the control side inferred the
+   instruments from whichever widgets happened to write to one. A panel is now a
+   stack of boxes, one to an instrument (§10.1). The box header — the
+   instrument's lease, arming and state, where the mockups put the name badge and
+   the power switch — is the slice after that, and the hardware and the scripting
+   below wait until the rack is finished.
 5. **Scripting.** *Superseded (2026-11-19):* the plan is now Ktest's own
    `expr` package, then procedures in a Robot subset; see §9.2 and
    `doc/two-racks-handoff.md`. **Both are built for a single rack**: `ktestd

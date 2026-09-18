@@ -1,8 +1,9 @@
-// The rack's surface: a panel laid out on a gridstack grid (§10.2). The same
-// grid shows the rack and edits it, so what is edited is exactly what will be
-// seen, drawing live data all the while.
+// The rack's surface: a panel laid out as a stack of instrument boxes, each a
+// gridstack grid of its own (§10.2). The same grids show the rack and edit it,
+// so what is edited is exactly what will be seen, drawing live data all the
+// while.
 //
-// gridstack owns the grid and where its items are; the widgets inside own
+// gridstack owns each grid and where its items are; the widgets inside own
 // their surfaces (§10.1). Nothing here re-renders on data: build() lays a
 // panel out once, and the rack's frame loop calls each widget's draw().
 
@@ -10,7 +11,7 @@ import { GridStack } from "gridstack";
 import type { Store } from "./store.ts";
 import type { Control } from "./control.ts";
 import type { Drawable } from "./widgets.ts";
-import { columnsOf, type Panel, type WidgetSpec } from "./panel.ts";
+import { columnsOfGroup, groupsOf, type Group, type Panel, type Pick, type WidgetSpec } from "./panel.ts";
 
 const TAGS = {
   readout: "ktest-readout",
@@ -25,18 +26,19 @@ const TAGS = {
 const ROW = 72;
 
 export class Rack {
+  /** Every widget on the rack, boxes in order: what the frame loop draws. */
   widgets: Drawable[] = [];
   /** editing lets widgets be dragged, resized, picked and removed; build() applies it. */
   editing = false;
-  onSelect: (i: number) => void = () => {};
-  onRemove: (i: number) => void = () => {};
+  onSelect: (pick: Pick) => void = () => {};
+  onRemove: (pick: Pick) => void = () => {};
   /** onMove is told after a widget has been dragged or resized, once the panel says where it is. */
   onMove: () => void = () => {};
 
   private host: HTMLElement;
   private store: Store;
   private control: Control;
-  private grid?: GridStack;
+  private grids: GridStack[] = [];
 
   constructor(host: HTMLElement, store: Store, control: Control) {
     this.host = host;
@@ -45,80 +47,113 @@ export class Rack {
   }
 
   /**
-   * build lays p out afresh. Widgets are cheap to make: the samples they draw
-   * are in the store, not in them. While editing, a drag or resize is written
-   * into p itself, so the panel is always where the grid shows it.
+   * build lays p out afresh, one box to a group. Widgets are cheap to make:
+   * the samples they draw are in the store, not in them. While editing, a drag
+   * or resize is written into p itself, so the panel is always where the grids
+   * show it.
    */
-  build(p: Panel, selected = -1) {
+  build(p: Panel, selected: Pick | null = null) {
     this.clear();
-    const el = document.createElement("div");
-    el.className = "grid-stack";
-    this.host.append(el);
-    p.widgets.forEach((w, i) => {
-      const item = document.createElement("div");
-      item.className = "grid-stack-item";
-      item.classList.toggle("selected", i === selected);
-      item.dataset.index = String(i);
-      for (const k of ["x", "y", "w", "h"] as const) item.setAttribute(`gs-${k}`, String(w[k]));
-      const content = document.createElement("div");
-      content.className = "grid-stack-item-content";
-      const widget = this.make(w);
-      const remove = document.createElement("button");
-      remove.className = "remove";
-      remove.title = "Remove this widget";
-      remove.textContent = "✕";
-      remove.addEventListener("click", (e) => {
-        e.stopPropagation();
-        this.onRemove(i);
+    const groups = groupsOf(p);
+    groups.forEach((g, gi) => {
+      const box = document.createElement("section");
+      box.className = "instrument";
+      box.dataset.group = String(gi);
+      const head = this.head(g, gi);
+      if (head) box.append(head);
+      const el = document.createElement("div");
+      el.className = "grid-stack";
+      box.append(el);
+      this.host.append(box);
+      g.widgets.forEach((w, i) => {
+        const item = document.createElement("div");
+        item.className = "grid-stack-item";
+        item.classList.toggle("selected", selected?.g === gi && selected?.i === i);
+        item.dataset.group = String(gi);
+        item.dataset.index = String(i);
+        for (const k of ["x", "y", "w", "h"] as const) item.setAttribute(`gs-${k}`, String(w[k]));
+        const content = document.createElement("div");
+        content.className = "grid-stack-item-content";
+        const widget = this.make(w);
+        const remove = document.createElement("button");
+        remove.className = "remove";
+        remove.title = "Remove this widget";
+        remove.textContent = "✕";
+        remove.addEventListener("click", (e) => {
+          e.stopPropagation();
+          this.onRemove({ g: gi, i });
+        });
+        content.append(widget, remove);
+        content.addEventListener("click", () => {
+          if (this.editing) this.onSelect({ g: gi, i });
+        });
+        item.append(content);
+        el.append(item);
+        this.widgets.push(widget);
       });
-      content.append(widget, remove);
-      content.addEventListener("click", () => {
-        if (this.editing) this.onSelect(i);
+      const grid = GridStack.init(
+        {
+          column: Math.min(48, Math.max(1, columnsOfGroup(p, g))),
+          cellHeight: ROW,
+          margin: 4,
+          // Widgets stay where the panel puts them, rather than rising to fill
+          // any space above: the layout is the panel's, not gridstack's.
+          float: true,
+          animate: false,
+          staticGrid: !this.editing,
+          minRow: this.editing ? 4 : 1,
+        },
+        el,
+      )!;
+      grid.on("change", (_e, nodes) => {
+        for (const n of nodes) {
+          const w = groups[Number(n.el?.dataset.group)]?.widgets[Number(n.el?.dataset.index)];
+          if (!w) continue;
+          w.x = n.x ?? w.x;
+          w.y = n.y ?? w.y;
+          w.w = n.w ?? w.w;
+          w.h = n.h ?? w.h;
+        }
+        this.onMove();
       });
-      item.append(content);
-      el.append(item);
-      this.widgets.push(widget);
-    });
-    this.grid = GridStack.init(
-      {
-        column: Math.min(48, Math.max(1, columnsOf(p))),
-        cellHeight: ROW,
-        margin: 4,
-        // Widgets stay where the panel puts them, rather than rising to fill
-        // any space above: the layout is the panel's, not gridstack's.
-        float: true,
-        animate: false,
-        staticGrid: !this.editing,
-        minRow: this.editing ? 8 : 1,
-      },
-      el,
-    )!;
-    this.grid.on("change", (_e, nodes) => {
-      for (const n of nodes) {
-        const w = p.widgets[Number(n.el?.dataset.index)];
-        if (!w) continue;
-        w.x = n.x ?? w.x;
-        w.y = n.y ?? w.y;
-        w.w = n.w ?? w.w;
-        w.h = n.h ?? w.h;
-      }
-      this.onMove();
+      this.grids.push(grid);
     });
   }
 
-  /** clear takes the rack down: no grid, no widgets. */
+  /** clear takes the rack down: no grids, no boxes, no widgets. */
   clear() {
-    this.grid?.destroy(true);
-    this.grid = undefined;
+    for (const g of this.grids) g.destroy(true);
+    this.grids = [];
     this.host.replaceChildren();
     this.widgets = [];
   }
 
-  /** select marks widget i as the one being edited; -1 for none. */
-  select(i: number) {
+  /** select marks a widget as the one being edited; null for none. */
+  select(pick: Pick | null) {
     for (const item of this.host.querySelectorAll<HTMLElement>(".grid-stack-item")) {
-      item.classList.toggle("selected", item.dataset.index === String(i));
+      const mine = pick !== null && item.dataset.group === String(pick.g) && item.dataset.index === String(pick.i);
+      item.classList.toggle("selected", mine);
     }
+  }
+
+  // head is a box's strip: what it is called, and the instrument it is for as
+  // a badge. A box that says neither has no strip at all. The instrument's
+  // lease and arming belong here and are not here yet.
+  private head(g: Group, gi: number): HTMLElement | null {
+    if (!g.label && !g.instrument && !this.editing) return null;
+    const head = document.createElement("div");
+    head.className = "box-head";
+    const label = document.createElement("span");
+    label.className = "box-label";
+    label.textContent = g.label || g.instrument || `Box ${gi + 1}`;
+    head.append(label);
+    if (g.instrument) {
+      const badge = document.createElement("span");
+      badge.className = "badge";
+      badge.textContent = g.instrument;
+      head.append(badge);
+    }
+    return head;
   }
 
   private make(w: WidgetSpec): Drawable {

@@ -41,6 +41,25 @@ import (
 // cells, the shape gridstack serialises, and every widget lies inside the grid
 // and clear of every other.
 //
+// A panel may instead be a stack of boxes, one to an instrument, which is what
+// a rack looks like when it is made of instruments rather than of widgets:
+//
+//	{
+//	  "title": "Bench",
+//	  "groups": [
+//	    {"instrument": "psu1", "label": "Power supply",
+//	     "widgets": [{"type": "setpoint", "channel": "psu1.ch1.v.set", "x": 0, "y": 0, "w": 3, "h": 2}]},
+//	    {"instrument": "scope1", "widgets": [...]}
+//	  ]
+//	}
+//
+// Each group is its own grid, drawn in the order given, top to bottom, and a
+// widget's x and y are its group's rather than the panel's — so a box can be
+// moved up or down without rewriting the coordinates of everything under it.
+// A group's "instrument" is the name the recording knows it by; what kind of
+// instrument it is comes from its control stream and is never stated here,
+// where it could be a second opinion and wrong.
+//
 // The rack edits its panel too. A save, PUT /panel, is checked exactly as the
 // file is at start, written back to that file, embedded in the recording again
 // and recorded in rack.panel; see savePanel.
@@ -48,6 +67,16 @@ type panel struct {
 	Title   string   `json:"title"`
 	Columns int      `json:"columns"`
 	Widgets []widget `json:"widgets"`
+	Groups  []group  `json:"groups"`
+}
+
+// A group is one instrument's box: its own grid, of the panel's width unless
+// it says otherwise.
+type group struct {
+	Instrument string   `json:"instrument"`
+	Label      string   `json:"label"`
+	Columns    int      `json:"columns"`
+	Widgets    []widget `json:"widgets"`
 }
 
 type widget struct {
@@ -103,8 +132,69 @@ func checkPanel(raw []byte) error {
 	if cols == 0 {
 		cols = 12
 	}
-	for i, w := range p.Widgets {
-		where := fmt.Sprintf("widget %d (%s)", i, w.Type)
+	// A panel is either one grid or a stack of boxes, never both: a file
+	// saying both would leave the order of the two unstated, and the rack
+	// would have to invent it.
+	if len(p.Widgets) > 0 && len(p.Groups) > 0 {
+		return errors.New(`a panel has either "widgets" or "groups", not both`)
+	}
+	if len(p.Groups) == 0 {
+		return checkWidgets(p.Widgets, cols, "")
+	}
+	for gi, g := range p.Groups {
+		gcols := g.Columns
+		if gcols == 0 {
+			gcols = cols
+		}
+		if gcols < 1 || gcols > 48 {
+			return fmt.Errorf("group %d (%s): %d columns; a group has 1 to 48, or the panel's when unsaid",
+				gi, groupName(g), g.Columns)
+		}
+		in := fmt.Sprintf("group %d (%s): ", gi, groupName(g))
+		if err := checkWidgets(g.Widgets, gcols, in); err != nil {
+			return err
+		}
+		if g.Instrument == "" {
+			continue
+		}
+		// A box that names an instrument and holds another's widget is a
+		// contradiction inside the file, and so is refused here. Whether the
+		// instrument exists is not knowable yet — a panel is written before
+		// its streams arrive, and replays against a recording — so that is
+		// left to the rack to say beside the box (§10.1).
+		for i, w := range g.Widgets {
+			for _, c := range append([]string{w.Channel}, w.Channels...) {
+				if c == "" {
+					continue
+				}
+				if inst := keyInstrument(c); inst != g.Instrument {
+					return fmt.Errorf("%swidget %d (%s): %s is %s's, and the box is %s's",
+						in, i, w.Type, c, inst, g.Instrument)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// groupName is what a group is called in a complaint: the instrument it is
+// for, what it is labelled, or that it is neither.
+func groupName(g group) string {
+	switch {
+	case g.Instrument != "":
+		return g.Instrument
+	case g.Label != "":
+		return g.Label
+	}
+	return "unnamed"
+}
+
+// checkWidgets holds one grid's widgets to their types' rules and to the grid
+// itself: each inside it, and clear of every other. in names the box they are
+// in, and is empty for a panel that is a single grid.
+func checkWidgets(ws []widget, cols int, in string) error {
+	for i, w := range ws {
+		where := fmt.Sprintf("%swidget %d (%s)", in, i, w.Type)
 		switch w.Type {
 		case "readout":
 			if w.Channel == "" || len(w.Channels) > 0 {
@@ -159,7 +249,7 @@ func checkPanel(raw []byte) error {
 		if w.X+w.W > cols {
 			return fmt.Errorf("%s: columns %d to %d of a grid of %d", where, w.X, w.X+w.W-1, cols)
 		}
-		for j, o := range p.Widgets[:i] {
+		for j, o := range ws[:i] {
 			if w.X < o.X+o.W && o.X < w.X+w.W && w.Y < o.Y+o.H && o.Y < w.Y+w.H {
 				return fmt.Errorf("%s overlaps widget %d (%s)", where, j, o.Type)
 			}
