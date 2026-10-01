@@ -126,6 +126,4 @@ Interfaces, file layouts and flags may still change.
 
 ## License
 
-MIT, see [LICENSE](LICENSE). For how the open-source project and Truke's
-commercial offering relate, see
-[doc/ktest-oss-and-commercial-model.md](doc/ktest-oss-and-commercial-model.md).
+MIT, see [LICENSE](LICENSE).
