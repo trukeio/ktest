@@ -18,7 +18,10 @@ transient and the CAN traffic it caused have to be matched up by hand.
 Ktest is meant as an open alternative to proprietary test environments such as
 Vector CANoe. It is MIT licensed, and it keeps your test data in an open format.
 
-![A rack panel](doc/panel-example-1.png)
+<p>
+  <a href="doc/ktest1.png"><img src="doc/ktest1.png" width="49%" alt="The rack driving a bench supply: gauges, setpoints and a live voltage and current plot"></a>
+  <a href="doc/ktest2.png"><img src="doc/ktest2.png" width="49%" alt="The rack driving a supply and an oscilloscope: supply controls and a 1 kHz sine on the scope"></a>
+</p>
 
 ## How it works
 
