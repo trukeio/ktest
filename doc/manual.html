@@ -1,0 +1,1005 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Ktest User Manual</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --ink: #16202b;
+  --ink-2: #3c4a58;
+  --muted: #66727f;
+  --rule: #d9dee5;
+  --rule-soft: #e8ecf1;
+  --accent: #1c5cab;
+  --accent-soft: #e6eef8;
+  --code-bg: #eef1f5;
+  --built: #1f6b45; --built-soft: #e2f1e8; --plan: #8a5a12; --plan-soft: #f6ecd9; --prop: #6b4aa0; --prop-soft: #ece6f6;
+  --curve-1: #8a96a3;
+  --curve-3: #1c5cab;
+  --curve-5: #b5651d;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --cond: "IBM Plex Sans Condensed", "Arial Narrow", "IBM Plex Sans", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #10151b;
+    --surface: #161d25;
+    --ink: #e4e9ef;
+    --ink-2: #b8c2cd;
+    --muted: #8a96a3;
+    --rule: #2a3440;
+    --rule-soft: #212a35;
+    --accent: #7fb0ee;
+    --accent-soft: #1b2a3d;
+    --code-bg: #1a222c;
+    --built: #7fcf9f; --built-soft: #17301f; --plan: #e0b060; --plan-soft: #33280f; --prop: #b79be6; --prop-soft: #261d3a;
+    --curve-1: #7d8995;
+    --curve-3: #7fb0ee;
+    --curve-5: #e0a25e;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #10151b;
+  --surface: #161d25;
+  --ink: #e4e9ef;
+  --ink-2: #b8c2cd;
+  --muted: #8a96a3;
+  --rule: #2a3440;
+  --rule-soft: #212a35;
+  --accent: #7fb0ee;
+  --accent-soft: #1b2a3d;
+  --code-bg: #1a222c;
+  --built: #7fcf9f; --built-soft: #17301f; --plan: #e0b060; --plan-soft: #33280f; --prop: #b79be6; --prop-soft: #261d3a;
+  --curve-1: #7d8995;
+  --curve-3: #7fb0ee;
+  --curve-5: #e0a25e;
+}
+
+html { scroll-padding-top: calc(env(safe-area-inset-top, 0px) + 16px); }
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 400 16px/1.6 var(--sans);
+  padding-inline: 16px;
+  -webkit-text-size-adjust: 100%;
+}
+a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+a:hover { text-decoration-thickness: 2px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+
+.frame {
+  max-width: 1180px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 48px;
+  padding-block: 40px 96px;
+}
+
+/* The contents */
+nav.toc {
+  position: sticky;
+  top: calc(env(safe-area-inset-top, 0px) + 24px);
+  align-self: start;
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  font-size: 13.5px;
+  line-height: 1.4;
+  padding-right: 8px;
+}
+.toc .brand { font: 600 15px/1.2 var(--cond); letter-spacing: 0.02em; margin-bottom: 18px; color: var(--ink); }
+.toc .brand span { color: var(--muted); font-weight: 500; }
+.toc ol { list-style: none; margin: 0; padding: 0; }
+.toc li.p { margin-bottom: 18px; }
+.toc li.p > a { display: block; font: 600 12px/1.3 var(--cond); text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink); text-decoration: none; margin-bottom: 6px; }
+.toc li.p li a { display: grid; grid-template-columns: 2.6em 1fr; padding: 3px 0 3px 8px; margin-left: -8px; border-left: 2px solid transparent; color: var(--ink-2); text-decoration: none; }
+.toc li.p li a:hover { color: var(--accent); }
+.toc li.p li a.here { border-left-color: var(--accent); color: var(--ink); font-weight: 500; }
+.toc .n { font-variant-numeric: tabular-nums; color: var(--muted); }
+.toc code { background: none; padding: 0; font-size: 0.95em; overflow-wrap: normal; }
+.toc-mobile { display: none; }
+
+/* The opening */
+header.intro { border-bottom: 1px solid var(--rule); padding-bottom: 32px; margin-bottom: 8px; }
+.eyebrow { font: 500 12px/1.2 var(--cond); letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); margin: 0 0 10px; }
+header.intro h1 { font: 600 clamp(34px, 5vw, 48px)/1.05 var(--cond); letter-spacing: -0.01em; margin: 0 0 16px; text-wrap: balance; }
+.lede { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 36px; align-items: start; }
+.lede p { margin: 0 0 12px; color: var(--ink-2); max-width: 62ch; }
+.lede p:first-child { font-size: 18px; color: var(--ink); }
+figure.accounts { margin: 0; }
+figure.accounts svg { width: 100%; height: auto; display: block; }
+figure.accounts .legend { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12.5px; color: var(--ink-2); }
+figure.accounts .legend li { display: flex; align-items: center; gap: 6px; }
+figure.accounts .legend i { width: 14px; height: 2px; border-radius: 1px; }
+figure.accounts figcaption { font-size: 12.5px; color: var(--muted); line-height: 1.45; margin-top: 6px; }
+.parts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 24px; }
+.parts a { display: grid; gap: 4px; align-content: start; padding: 14px 16px; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; text-decoration: none; color: var(--ink-2); font-size: 14px; line-height: 1.45; }
+.parts a:hover { border-color: var(--accent); }
+.parts b { font: 600 17px/1.2 var(--cond); color: var(--ink); }
+.parts b span { color: var(--accent); margin-right: 6px; font-variant-numeric: tabular-nums; }
+.conventions { margin-top: 20px; font-size: 14px; color: var(--ink-2); }
+.conventions summary { cursor: pointer; color: var(--ink); font-weight: 500; }
+.conventions ul { margin: 8px 0 0; padding-left: 20px; }
+
+/* The manual */
+main { min-width: 0; }
+.part { padding-top: 40px; }
+.part h1 {
+  font: 600 32px/1.1 var(--cond);
+  margin: 24px 0 8px;
+  padding-top: 24px;
+  border-top: 3px solid var(--ink);
+  text-wrap: balance;
+}
+.part h2 { font: 600 24px/1.2 var(--cond); margin: 48px 0 12px; text-wrap: balance; }
+.part h3 { font: 600 18px/1.3 var(--sans); margin: 32px 0 8px; }
+.part h4 { font: 600 16px/1.3 var(--sans); margin: 24px 0 6px; }
+.part h4 code { font-size: 15px; }
+.part p, .part li { max-width: 72ch; }
+.part ul, .part ol { padding-left: 22px; }
+.part li + li { margin-top: 4px; }
+.part strong { font-weight: 600; }
+
+code { font: 400 0.9em/1 var(--mono); background: var(--code-bg); padding: 0.1em 0.3em; border-radius: 3px; overflow-wrap: anywhere; }
+pre.code {
+  font: 400 13.5px/1.55 var(--mono);
+  background: var(--code-bg);
+  border: 1px solid var(--rule-soft);
+  border-radius: 6px;
+  padding: 14px 16px;
+  overflow-x: auto;
+  margin: 12px 0 16px;
+  tab-size: 4;
+}
+pre.code code { background: none; padding: 0; font: inherit; overflow-wrap: normal; }
+
+.scroll { overflow-x: auto; margin: 12px 0 20px; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; line-height: 1.45; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; vertical-align: top; padding: 8px 12px; border-bottom: 1px solid var(--rule-soft); }
+thead th { font: 600 12px/1.3 var(--cond); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); background: var(--bg); border-bottom: 1px solid var(--rule); white-space: nowrap; }
+tbody tr:last-child td { border-bottom: 0; }
+td code { white-space: nowrap; }
+td:first-child { min-width: 7em; }
+
+blockquote { margin: 16px 0; padding: 4px 16px; border-left: 3px solid var(--accent); background: var(--accent-soft); }
+
+footer.end { margin-top: 64px; padding-top: 16px; border-top: 1px solid var(--rule); font-size: 13px; color: var(--muted); }
+
+@media (max-width: 960px) {
+  .frame { grid-template-columns: minmax(0, 1fr); gap: 0; padding-block: 24px 64px; }
+  nav.toc { display: none; }
+  .toc-mobile { display: block; margin: 20px 0 0; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); padding: 10px 14px; font-size: 14px; }
+  .toc-mobile summary { cursor: pointer; font-weight: 500; }
+  .toc-mobile nav { margin-top: 12px; }
+  .lede { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  figure.accounts { max-width: 360px; }
+}
+@media (max-width: 640px) {
+  .parts { grid-template-columns: minmax(0, 1fr); }
+  body { font-size: 15.5px; }
+  .part h1 { font-size: 28px; }
+  .part h2 { font-size: 21px; }
+}
+.st { display: inline-block; font: 600 11px/1 var(--cond); letter-spacing: 0.07em; text-transform: uppercase; padding: 3px 6px 2px; border-radius: 3px; vertical-align: 0.12em; white-space: nowrap; }
+.st.built { color: var(--built); background: var(--built-soft); }
+.st.planned { color: var(--plan); background: var(--plan-soft); }
+.st.proposed { color: var(--prop); background: var(--prop-soft); }
+h2 .st, h3 .st { margin-left: 6px; }
+figure.diagram { margin: 16px 0 20px; }
+.scroll-x { overflow-x: auto; }
+figure.diagram svg { display: block; width: 100%; min-width: 620px; max-width: 760px; height: auto; font-family: var(--sans); }
+figure.diagram figcaption { font-size: 13px; color: var(--muted); margin-top: 8px; max-width: 72ch; }
+figure.diagram .b { fill: var(--surface); stroke: var(--rule); stroke-width: 1.25; }
+figure.diagram .b.ext { fill: var(--code-bg); }
+figure.diagram .outer { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.25; }
+figure.diagram text { text-anchor: middle; }
+figure.diagram .t { font: 600 14px var(--sans); fill: var(--ink); }
+figure.diagram .s { font: 400 12px var(--sans); fill: var(--ink-2); }
+figure.diagram .l { font: 500 11px var(--cond); letter-spacing: 0.04em; text-anchor: start; }
+figure.diagram .l[text-anchor="end"] { text-anchor: end; }
+figure.diagram text[text-anchor="start"] { text-anchor: start; }
+figure.diagram .l.cmd { fill: var(--accent); }
+figure.diagram .l.res { fill: var(--curve-5); }
+figure.diagram .a { stroke-width: 1.5; fill: none; stroke: var(--muted); }
+figure.diagram .a.cmd { stroke: var(--accent); }
+figure.diagram .a.res { stroke: var(--curve-5); }
+.status-key { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 20px 0 0; padding: 0; list-style: none; font-size: 14px; color: var(--ink-2); }
+</style>
+
+<div class="frame">
+  <nav class="toc" aria-label="Contents">
+    <div class="brand">Ktest <span>user manual</span></div>
+    <ol><li class="p"><a href="#part-1"><span class="n">1</span> Using Ktest</a><ol><li><a href="#what-ktest-is"><span class="n">1.1</span><span>What Ktest is</span></a></li><li><a href="#build-install"><span class="n">1.2</span><span>Build and install</span></a></li><li><a href="#first-bench"><span class="n">1.3</span><span>A first bench</span></a></li><li><a href="#the-rack"><span class="n">1.4</span><span>The rack, in a browser</span></a></li><li><a href="#scripts"><span class="n">1.5</span><span>Driving it from scripts</span></a></li><li><a href="#agents"><span class="n">1.6</span><span>With an LLM agent</span></a></li><li><a href="#programs"><span class="n">1.7</span><span>The programs</span></a></li><li><a href="#refusals"><span class="n">1.8</span><span>When ktestd refuses</span></a></li></ol></li>
+<li class="p"><a href="#part-2"><span class="n">2</span> Setting up a bench</a><ol><li><a href="#channels"><span class="n">2.1</span><span>Channels</span></a></li><li><a href="#bus"><span class="n">2.2</span><span>Connecting a bus</span></a></li><li><a href="#instruments"><span class="n">2.3</span><span>Connecting instruments</span></a></li><li><a href="#new-instruments"><span class="n">2.4</span><span>Adding an instrument</span></a></li><li><a href="#limits"><span class="n">2.5</span><span>Limits: <code>limits.json</code></span></a></li><li><a href="#access"><span class="n">2.6</span><span>Access: tokens, roles and TLS</span></a></li><li><a href="#panels"><span class="n">2.7</span><span>Panels: <code>panel.json</code></span></a></li><li><a href="#editing-panels"><span class="n">2.8</span><span>Designing a panel in the rack</span></a></li><li><a href="#the-recording"><span class="n">2.9</span><span>The recording</span></a></li></ol></li>
+<li class="p"><a href="#part-3"><span class="n">3</span> The design</a><ol><li><a href="#four-properties"><span class="n">3.1</span><span>Four properties</span></a></li><li><a href="#control-in-results-out"><span class="n">3.2</span><span>Commands in, results out</span></a></li><li><a href="#safety"><span class="n">3.3</span><span>Safety</span></a></li><li><a href="#timing"><span class="n">3.4</span><span>Timing</span></a></li><li><a href="#waveforms"><span class="n">3.5</span><span>Waveforms</span></a></li><li><a href="#not"><span class="n">3.6</span><span>What Ktest is not</span></a></li><li><a href="#status"><span class="n">3.7</span><span>Status and roadmap</span></a></li></ol></li></ol>
+  </nav>
+
+  <main>
+    <header class="intro">
+      <p class="eyebrow">Truke Ktest · bus, bench and recording on one timeline · prospective manual</p>
+      <h1>Ktest user manual</h1>
+      <div class="lede">
+        <div>
+          <p>Ktest turns a Linux machine and the test equipment wired to it into an instrument rack you use from a browser, a script or an LLM agent.</p>
+          <p>It monitors and transmits on CAN, drives bench supplies and oscilloscopes, and records all of it, with every command anyone gave, into one open file against one clock.</p>
+          <p>Ktest is not finished. This manual describes it as it is meant to be, and marks what is not there yet.</p>
+        </div>
+        <figure class="accounts">
+          <svg viewBox="0 0 300 150" role="img" aria-labelledby="ac-title">
+            <title id="ac-title">One voltage setpoint as three accounts over time. 12 V is asked for; the supply, rated 6 V, holds 6 V; 5 V is measured while the current limit is active, and 6 V once the limit is raised.</title>
+            <g stroke="var(--rule)" stroke-width="1" fill="none">
+              <line x1="34" y1="124" x2="290" y2="124"/>
+              <line x1="34" y1="10" x2="34" y2="124"/>
+              <line x1="34" y1="70" x2="290" y2="70" stroke-dasharray="2 3"/>
+              <line x1="34" y1="16" x2="290" y2="16" stroke-dasharray="2 3"/>
+              <line x1="80" y1="124" x2="80" y2="128"/>
+              <line x1="190" y1="124" x2="190" y2="128"/>
+            </g>
+            <g fill="var(--muted)" font-family="IBM Plex Mono, ui-monospace, monospace" font-size="9">
+              <text x="29" y="19" text-anchor="end">12 V</text>
+              <text x="29" y="73" text-anchor="end">6</text>
+              <text x="29" y="127" text-anchor="end">0</text>
+              <g font-family="IBM Plex Sans, system-ui, sans-serif">
+              <text x="80" y="139" text-anchor="middle">12 V asked</text>
+              <text x="190" y="139" text-anchor="middle">current limit raised</text>
+              </g>
+            </g>
+            <path d="M34,124 H80 V16 H290" fill="none" stroke="var(--curve-1)" stroke-width="2" stroke-linejoin="round"/>
+            <path d="M34,124 H80 V70 H290" fill="none" stroke="var(--curve-3)" stroke-width="2" stroke-linejoin="round"/>
+            <path d="M34,124 H80 V79 H190 V70 H290" fill="none" stroke="var(--curve-5)" stroke-width="2" stroke-linejoin="round" stroke-dasharray="5 3"/>
+          </svg>
+          <ul class="legend" aria-hidden="true">
+            <li><i style="background:var(--curve-1)"></i><code>v.set</code>, asked</li>
+            <li><i style="background:var(--curve-3)"></i><code>v.applied</code>, held</li>
+            <li><i style="background:var(--curve-5)"></i><code>meas.v</code>, measured</li>
+          </ul>
+          <figcaption>Every controlled quantity is recorded as three accounts. Here 12 V is asked of a channel rated 6 V: the supply holds 6 V, and 5 V is measured until the current limit is raised. One channel for all three would hide both events.</figcaption>
+        </figure>
+      </div>
+
+      <div class="parts">
+        <a href="#part-1"><b><span>1</span>Using Ktest</b>Building it, a first bench without hardware, the rack in a browser, scripts, LLM agents, and every program.</a>
+        <a href="#part-2"><b><span>2</span>Setting up a bench</b>Channels, buses, instruments and how to add one, limits, access, and designing panels.</a>
+        <a href="#part-3"><b><span>3</span>The design</b>Why commands and results travel apart, what keeps a bench safe, timing, waveforms, and what exists today.</a>
+      </div>
+
+      <ul class="status-key">
+        <li><span class="st built">built</span> works today, as described</li>
+        <li><span class="st planned">planned</span> decided, not yet written</li>
+        <li><span class="st proposed">proposed</span> an idea put up for discussion</li>
+      </ul>
+
+      <details class="toc-mobile">
+        <summary>Contents</summary>
+        <nav aria-label="Contents"><ol class="toc"><li class="p"><a href="#part-1"><span class="n">1</span> Using Ktest</a><ol><li><a href="#what-ktest-is"><span class="n">1.1</span><span>What Ktest is</span></a></li><li><a href="#build-install"><span class="n">1.2</span><span>Build and install</span></a></li><li><a href="#first-bench"><span class="n">1.3</span><span>A first bench</span></a></li><li><a href="#the-rack"><span class="n">1.4</span><span>The rack, in a browser</span></a></li><li><a href="#scripts"><span class="n">1.5</span><span>Driving it from scripts</span></a></li><li><a href="#agents"><span class="n">1.6</span><span>With an LLM agent</span></a></li><li><a href="#programs"><span class="n">1.7</span><span>The programs</span></a></li><li><a href="#refusals"><span class="n">1.8</span><span>When ktestd refuses</span></a></li></ol></li>
+<li class="p"><a href="#part-2"><span class="n">2</span> Setting up a bench</a><ol><li><a href="#channels"><span class="n">2.1</span><span>Channels</span></a></li><li><a href="#bus"><span class="n">2.2</span><span>Connecting a bus</span></a></li><li><a href="#instruments"><span class="n">2.3</span><span>Connecting instruments</span></a></li><li><a href="#new-instruments"><span class="n">2.4</span><span>Adding an instrument</span></a></li><li><a href="#limits"><span class="n">2.5</span><span>Limits: <code>limits.json</code></span></a></li><li><a href="#access"><span class="n">2.6</span><span>Access: tokens, roles and TLS</span></a></li><li><a href="#panels"><span class="n">2.7</span><span>Panels: <code>panel.json</code></span></a></li><li><a href="#editing-panels"><span class="n">2.8</span><span>Designing a panel in the rack</span></a></li><li><a href="#the-recording"><span class="n">2.9</span><span>The recording</span></a></li></ol></li>
+<li class="p"><a href="#part-3"><span class="n">3</span> The design</a><ol><li><a href="#four-properties"><span class="n">3.1</span><span>Four properties</span></a></li><li><a href="#control-in-results-out"><span class="n">3.2</span><span>Commands in, results out</span></a></li><li><a href="#safety"><span class="n">3.3</span><span>Safety</span></a></li><li><a href="#timing"><span class="n">3.4</span><span>Timing</span></a></li><li><a href="#waveforms"><span class="n">3.5</span><span>Waveforms</span></a></li><li><a href="#not"><span class="n">3.6</span><span>What Ktest is not</span></a></li><li><a href="#status"><span class="n">3.7</span><span>Status and roadmap</span></a></li></ol></li></ol></nav>
+      </details>
+
+      <details class="conventions">
+        <summary>Conventions of this manual</summary>
+        <ul>
+          <li><code>$ ktestd …</code> is a command typed in a terminal on the Linux machine that runs Ktest.</li>
+          <li>Anything not marked is built. A mark on a heading covers its whole section.</li>
+          <li>Names such as <code>psu1</code>, <code>scope1</code> and <code>can0</code> are this manual's bench. Yours are whatever you name on the command line.</li>
+          <li>Durations are written as Go writes them: <code>10ms</code>, <code>30s</code>, <code>1m0s</code>. Voltages are in V, currents in A, times on a scope in s.</li>
+          <li>The examples (<code>examples/</code> in the repository) run without hardware and are referred to throughout.</li>
+        </ul>
+      </details>
+    </header>
+<section class="part" id="part-1">
+<h1 id="h-1">1 Using Ktest</h1>
+
+<h2 id="what-ktest-is">1.1 What Ktest is</h2>
+<p>Ktest is one program, <code>ktestd</code>, running on a Linux machine that is wired to the bench: a CAN interface, and instruments reached over the network. It owns that hardware, records everything it sees and does into one file, and serves an instrument rack to any browser. Three kinds of work that today need three unrelated tools meet in it:</p>
+<div class="scroll"><table>
+<thead><tr><th>Work</th><th>What Ktest does</th><th>Status</th></tr></thead>
+<tbody>
+<tr><td><strong>Bus</strong></td><td>monitors CAN and CAN FD, decodes with a DBC, sends single frames and kernel-paced cyclic ones, by bytes or by signal</td><td><span class="st built">built</span></td></tr>
+<tr><td></td><td>LIN, ISO-TP, J1939</td><td><span class="st planned">planned</span></td></tr>
+<tr><td><strong>Bench</strong></td><td>drives programmable supplies and oscilloscopes over SCPI</td><td><span class="st built">built</span> against simulators</td></tr>
+<tr><td></td><td>loads, multimeters, function generators; USBTMC</td><td><span class="st planned">planned</span></td></tr>
+<tr><td><strong>Recording</strong></td><td>puts all of it on one timeline, in one open format, <a href="#the-recording">Logb</a></td><td><span class="st built">built</span></td></tr>
+</tbody>
+</table></div>
+<p>The third row is the reason Ktest exists. Bus tools do not see the bench and bench software does not see the bus, so relating a supply transient to the CAN traffic it caused is done by hand, if at all. In a Ktest recording both are in the same file against the same clock.</p>
+<figure class="diagram"><div class="scroll-x"><svg viewBox="0 0 760 376" role="img" aria-labelledby="arch-title">
+<title id="arch-title">Architecture. A browser, a script and an LLM agent each send commands to ktestd as HTTP requests and receive results as a Logb stream. Inside ktestd the control plane drives the bus layer and the instrument layer, and a recorder writes everything to a Logb file. The bus layer connects to the CAN interface and the instrument layer to supplies and scopes.</title>
+<defs><marker id="ah-cmd" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/></marker><marker id="ah-cmd-s" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" fill="var(--accent)"/></marker><marker id="ah-res" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--curve-5)"/></marker><marker id="ah-res-s" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" fill="var(--curve-5)"/></marker><marker id="ah-n" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--muted)"/></marker><marker id="ah-n-s" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" fill="var(--muted)"/></marker></defs>
+<rect class="b" x="40" y="8" width="200" height="48" rx="5"/><text class="t" x="140.0" y="29.0">Browser</text><text class="s" x="140.0" y="45.0">the rack, on any OS</text>
+<line class="a cmd" x1="116" y1="56" x2="116" y2="118" marker-end="url(#ah-cmd)"/>
+<line class="a res" x1="164" y1="120" x2="164" y2="58" marker-end="url(#ah-res)"/>
+<text class="l cmd" x="108" y="84" text-anchor="end">commands</text><text class="l cmd" x="108" y="97" text-anchor="end">REST</text>
+<text class="l res" x="172" y="84">results</text><text class="l res" x="172" y="97">Logb stream</text>
+<rect class="b" x="280" y="8" width="200" height="48" rx="5"/><text class="t" x="380.0" y="29.0">Script</text><text class="s" x="380.0" y="45.0">curl, Python, CI</text>
+<line class="a cmd" x1="356" y1="56" x2="356" y2="118" marker-end="url(#ah-cmd)"/>
+<line class="a res" x1="404" y1="120" x2="404" y2="58" marker-end="url(#ah-res)"/>
+<text class="l cmd" x="348" y="84" text-anchor="end">commands</text><text class="l cmd" x="348" y="97" text-anchor="end">REST</text>
+<text class="l res" x="412" y="84">results</text><text class="l res" x="412" y="97">Logb stream</text>
+<rect class="b" x="520" y="8" width="200" height="48" rx="5"/><text class="t" x="620.0" y="29.0">LLM agent</text><text class="s" x="620.0" y="45.0">through tools</text>
+<line class="a cmd" x1="596" y1="56" x2="596" y2="118" marker-end="url(#ah-cmd)"/>
+<line class="a res" x1="644" y1="120" x2="644" y2="58" marker-end="url(#ah-res)"/>
+<text class="l cmd" x="588" y="84" text-anchor="end">commands</text><text class="l cmd" x="588" y="97" text-anchor="end">REST</text>
+<text class="l res" x="652" y="84">results</text><text class="l res" x="652" y="97">Logb stream</text>
+<rect class="outer" x="20" y="120" width="720" height="164" rx="7"/>
+<text class="t" x="34" y="141" text-anchor="start">ktestd</text><text class="s" x="84" y="141" text-anchor="start">Linux, one static binary</text>
+<rect class="b" x="40" y="152" width="420" height="44" rx="5"/><text class="t" x="250.0" y="171.0">Control plane</text><text class="s" x="250.0" y="187.0">leases, arming, limits</text>
+<rect class="b" x="40" y="220" width="200" height="44" rx="5"/><text class="t" x="140.0" y="239.0">Bus layer</text><text class="s" x="140.0" y="255.0">SocketCAN</text>
+<rect class="b" x="260" y="220" width="200" height="44" rx="5"/><text class="t" x="360.0" y="239.0">Instrument layer</text><text class="s" x="360.0" y="255.0">SCPI over TCP</text>
+<rect class="b" x="500" y="152" width="220" height="112" rx="5"/><text class="t" x="610.0" y="205.0">Recorder</text><text class="s" x="610.0" y="221.0">every frame, value and decision</text>
+<line class="a n" x1="140" y1="196" x2="140" y2="219" marker-end="url(#ah-n)"/>
+<line class="a n" x1="360" y1="196" x2="360" y2="219" marker-end="url(#ah-n)"/>
+<line class="a n" x1="460" y1="174" x2="499" y2="174" marker-end="url(#ah-n)"/>
+<line class="a n" x1="460" y1="242" x2="499" y2="242" marker-end="url(#ah-n)"/>
+<rect class="b ext" x="40" y="320" width="200" height="48" rx="5"/><text class="t" x="140.0" y="341.0">CAN interface</text><text class="s" x="140.0" y="357.0">can0</text>
+<rect class="b ext" x="260" y="320" width="200" height="48" rx="5"/><text class="t" x="360.0" y="341.0">Instruments</text><text class="s" x="360.0" y="357.0">supplies, oscilloscopes</text>
+<rect class="b ext" x="500" y="320" width="220" height="48" rx="5"/><text class="t" x="610.0" y="341.0">run.logb</text><text class="s" x="610.0" y="357.0">the recording</text>
+<line class="a n" x1="140" y1="265" x2="140" y2="319" marker-end="url(#ah-n)" marker-start="url(#ah-n-s)"/>
+<line class="a n" x1="360" y1="265" x2="360" y2="319" marker-end="url(#ah-n)" marker-start="url(#ah-n-s)"/>
+<line class="a n" x1="610" y1="264" x2="610" y2="319" marker-end="url(#ah-n)"/>
+</svg></div><figcaption>Commands go in as HTTP requests. Results come back only on the stream, which carries the same bytes the recorder writes to the file.</figcaption></figure>
+<p>There are three ways to use it, and they are the same interface seen from three clients:</p>
+<ul>
+<li><strong>The rack</strong>, in a browser: panels of knobs, gauges, plots and scope traces laid out per instrument (<a href="#the-rack">§1.4</a>).</li>
+<li><strong>A script</strong>: commands are plain HTTP requests, so <code>curl</code>, Python or a CI job drives the bench (<a href="#scripts">§1.5</a>).</li>
+<li><strong>An LLM agent</strong>: the same requests, offered to a model as tools, under the same limits as everyone else (<a href="#agents">§1.6</a>).</li>
+</ul>
+<p>All three are bound by one rule: <strong>a command is answered with accepted or refused, never with state.</strong> What the command did arrives on the stream, as a record, for every client at once. That is why two browsers stay in step, a reloaded page recovers the rack, and a script and a person can watch the same bench without disagreeing about it. Part 3 explains the design.</p>
+
+<h2 id="build-install">1.2 Build and install</h2>
+<p>Ktest is written in Go and has no C dependencies. The rack's browser code is committed already built and is embedded in the binary, so Node is not needed to build or run it.</p>
+<h3>From source <span class="st built">today</span></h3>
+<p>You need Linux, Go 1.25 or later, and the Logb repository checked out beside Ktest's, because Logb has no tagged release yet and <code>go.mod</code> points at <code>../logb</code>:</p>
+<pre class="code"><code>$ git clone https://github.com/rveen/logb
+$ git clone https://github.com/rveen/ktest
+$ cd ktest
+$ go build -o bin/ ./cmd/...
+$ ls bin
+canlogb  ktestd  logbcheck  psusim  scopesim  vcanprobe</code></pre>
+<p>For a small ARM board, cross-compile on any machine and copy the binary over:</p>
+<pre class="code"><code>$ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build ./cmd/ktestd ./cmd/vcanprobe</code></pre>
+<p>To test bus work without hardware, install <code>can-utils</code> (<code>candump</code>, <code>canplayer</code>, <code>cangen</code>) and make a virtual bus:</p>
+<pre class="code"><code>$ sudo modprobe vcan
+$ sudo ip link add dev vcan0 type vcan
+$ sudo ip link set up vcan0</code></pre>
+<h3>Rebuilding the rack</h3>
+<p>Only after changing something under <code>web/src/</code>:</p>
+<pre class="code"><code>$ cd web &amp;&amp; npm install &amp;&amp; npm run build      # writes web/dist/, which ktestd embeds
+$ npm test                                   # the browser's Logb reader against Go's</code></pre>
+<h3>As a service <span class="st planned">planned</span></h3>
+<p>The intended installation is a release binary and a systemd unit running as an ordinary user, with its configuration in one directory. Nothing of this is packaged yet. The layout it is heading for:</p>
+<div class="scroll"><table>
+<thead><tr><th>Path</th><th>What it holds</th></tr></thead>
+<tbody>
+<tr><td><code>/usr/bin/ktestd</code></td><td>the daemon</td></tr>
+<tr><td><code>/etc/ktest/limits.json</code></td><td>the limits no client can loosen (<a href="#limits">§2.4</a>)</td></tr>
+<tr><td><code>/etc/ktest/tokens</code></td><td>who may log in, as hashes (<a href="#access">§2.5</a>)</td></tr>
+<tr><td><code>/etc/ktest/panels/*.json</code></td><td>rack panels (<a href="#panels">§2.6</a>)</td></tr>
+<tr><td><code>/run/ktest.sock</code></td><td>the local control socket, mode 0660</td></tr>
+<tr><td><code>~/.local/state/ktestd/</code></td><td>what the daemon makes for itself, such as its TLS certificate</td></tr>
+<tr><td><code>/var/lib/ktest/*.logb</code></td><td>recordings</td></tr>
+</tbody>
+</table></div>
+<p>A <strong>Ktest Box</strong>, a small appliance with the daemon, a CAN interface and a tested configuration already on it, is the commercial form of the same thing. The software on it is the open-source one.</p>
+<h3>The machine</h3>
+<p>Any Linux machine with a SocketCAN interface works. The bench this manual is written around is an Orange Pi Zero 2 with an MCP2518FD CAN FD controller on its SPI header, under the mainline <code>mcp251xfd</code> driver; <code>examples/orangepi-zero2-mcp2518fd/</code> has the wiring and the device tree overlay. USB adapters that speak <code>gs_usb</code> (CANable and its derivatives) work wherever a plain interface is enough. Vector VN hardware is not supported.</p>
+<p>Ktest opens an interface and never configures it. Set the bit rates yourself, which is the one step that needs root:</p>
+<pre class="code"><code>$ sudo ip link set can0 up type can bitrate 500000 dbitrate 2000000 fd on
+$ ip -details link show can0 | grep -E 'bitrate|dbitrate'    # the rates it actually runs</code></pre>
+<p>Then run <code>vcanprobe -i can0</code> once. It measures what this kernel and adapter can do (loopback, CAN FD, error frames, timestamps, cyclic pacing, drop reporting), and Ktest's timing claims hold only where the probe says so.</p>
+
+<h2 id="first-bench">1.3 A first bench</h2>
+<p><code>examples/bench</code> runs a whole bench with no hardware: a simulated two-channel supply, a simulated Siglent SDS1202X-E oscilloscope, a virtual CAN bus, and <code>ktestd</code> recording all three and serving the rack.</p>
+<pre class="code"><code>$ cd examples/bench
+$ ./demo.sh
+  ...
+  Open https://localhost:8445/ in Chrome and log in with this token:
+
+    3f9c…</code></pre>
+<p>The script builds the programs, makes a login token the first time, and runs until Ctrl-C, recording to <code>demo.logb</code>. The certificate is self-signed, so the browser warns once. Paste the token.</p>
+<p>Behind the script is one command line, and it is the whole configuration of a bench:</p>
+<pre class="code"><code>$ ktestd -https :8445 -tokens tokens \
+         -panel rack.json -limits limits.json \
+         -psu psu1=127.0.0.1:5025,2 \
+         -scope scope1=127.0.0.1:5026,2,full=ch1 \
+         -o demo.logb vcan0</code></pre>
+<p>Things to try, in order:</p>
+<ol>
+<li>Press <strong>Take control</strong>, then <strong>Arm</strong>. The supply's widgets unlock. The scope's traces were already drawing, because reading an input needs no permission.</li>
+<li>Raise <em>ch1 current limit</em> to 0.5 A, set <em>ch1 voltage</em> to 5 V, and switch <em>ch1 output</em> on. The readouts show 5 V and 0.5 A, measured at the simulated 10 Ω load.</li>
+<li>Lower the current limit to 0.2 A. The supply goes into constant current and the measured voltage falls to 2 V, although the setpoint still says 5 V.</li>
+<li>Ask for 20 V. The request is refused, because <code>limits.json</code> caps the channel at 12 V. The refusal is in the recording.</li>
+<li>Set <em>C1 volts/div</em> to 0.3. The scope has only 1-2-5 steps, so it holds 0.2, and the widget shows both what you asked for and what is held.</li>
+<li>Press <strong>STOP</strong>. Every instrument is disarmed and the supply's outputs go off. The scope is left as it is.</li>
+</ol>
+<p>Afterwards, check the recording against the simulators' own transcripts, which were written by something that knows nothing of Logb:</p>
+<pre class="code"><code>$ bin/logbcheck -control -psu psu1=psu.log -scope scope1=scope.log demo.logb /dev/null</code></pre>
+<p><code>examples/supply-bench</code> and <code>examples/scope-bench</code> are the same with one instrument each, and show more of each one's widgets.</p>
+
+<h2 id="the-rack">1.4 The rack, in a browser</h2>
+<p>The rack is served by the daemon it drives, at the address given with <code>-https</code>. It works in any current browser on any operating system; nothing is installed on the client.</p>
+<h3>Logging in</h3>
+<p>The page asks for a token (<a href="#access">§2.5</a>). A token has a name and a role. <code>view</code> may watch and may stop; <code>operate</code> may also take control, arm, write and save panels.</p>
+<h3>The control bar</h3>
+<div class="scroll"><table>
+<thead><tr><th>Control</th><th>What it does</th></tr></thead>
+<tbody>
+<tr><td><strong>Take control</strong></td><td>takes the lease of every instrument on the panel in one press. A lease is single-writer: while you hold it nobody else can write to that instrument. The page renews it; if the page dies, the lease runs out by itself after its term (30 s).</td></tr>
+<tr><td><strong>Arm</strong></td><td>arms the instruments you hold. Nothing is sent or set on an instrument that is not armed.</td></tr>
+<tr><td><strong>STOP</strong></td><td>disarms everything the daemon drives, stops all cyclic transmit and switches every supply output off. It needs no lease and works for a <code>view</code> name, because a stop that needed the lease would be out of reach exactly when its holder has hung.</td></tr>
+<tr><td><strong>Edit panel</strong></td><td>turns the rack into its own editor (<a href="#editing-panels">§2.7</a>).</td></tr>
+</tbody>
+</table></div>
+<p>Each instrument has a box, and the box's header says what is true of that instrument: its kind, who holds its lease, and whether it is armed. When the instruments disagree, one held by someone else or one armed and another not, the bar says how many instead of rounding it off.</p>
+<h3>The widgets</h3>
+<p>A widget that writes unlocks only when this page holds the lease and the recording says the instrument is armed. Every writing widget shows two things: the value you <em>asked for</em> and the value the instrument <em>holds</em>. They differ when an instrument clamps a setpoint to its rating or rounds it to a step it has, and the widget marks the difference instead of hiding it.</p>
+<div class="scroll"><table>
+<thead><tr><th>Widget</th><th>Shows or sets</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td>readout</td><td>one value, as a number with its unit</td><td></td></tr>
+<tr><td>gauge</td><td>one value on a scale</td><td></td></tr>
+<tr><td>lamp</td><td>one on/off or state value</td><td></td></tr>
+<tr><td>plot</td><td>several channels against time, scrolling</td><td>channels from different sources share one axis</td></tr>
+<tr><td>scope</td><td>one oscilloscope channel, per acquisition</td><td>drawn as a min/max band, so a one-sample spike is still visible; the trigger is the dashed line</td></tr>
+<tr><td>setpoint</td><td>a number, typed</td><td></td></tr>
+<tr><td>knob, slider</td><td>a number, dragged or stepped with the arrow keys</td><td>sends on release, so a drag is one decision in the recording</td></tr>
+<tr><td>enum</td><td>one of a list of named values</td><td>shows no choice when the held value is not on the list</td></tr>
+<tr><td>toggle</td><td>on or off</td><td></td></tr>
+<tr><td>button</td><td>on while held</td><td>releases when the pointer leaves, the window loses focus or the tab is hidden</td></tr>
+<tr><td>trace table</td><td>a bus's frames as they arrive, decoded</td><td><span class="st planned">planned</span></td></tr>
+</tbody>
+</table></div>
+<p>Without a panel, the rack lists every channel the stream carries, which is a quick way to see what a new bench offers.</p>
+<h3>Replay <span class="st planned">planned</span></h3>
+<p>A recording carries the panel that was on screen while it was made, so opening a recording brings back the rack and plays the data through the same widgets. In replay nothing actuates: hardware bindings resolve only in live mode, and the rack will show which mode it is in where it cannot be missed. Until this is built, recordings are viewed with Logb's own viewer, <code>logbview</code>, which also follows a file that is still being written (<code>logbview -follow</code>).</p>
+
+<h2 id="scripts">1.5 Driving it from scripts</h2>
+<p>Everything the rack does, it does through HTTP requests that a script can make as well. There are two ways in:</p>
+<div class="scroll"><table>
+<thead><tr><th>Listener</th><th>Flag</th><th>Who may use it</th></tr></thead>
+<tbody>
+<tr><td>Unix socket</td><td><code>-sock /run/ktest.sock</code></td><td>whoever the file's owner and group admit; full control, no token</td></tr>
+<tr><td>HTTPS</td><td><code>-https :8443 -tokens file</code></td><td>named tokens with a role; control and streams</td></tr>
+<tr><td>HTTP</td><td><code>-http :8080</code></td><td>anyone; the streams only, read-only, no control</td></tr>
+</tbody>
+</table></div>
+<h3>The sequence</h3>
+<p>Every script that writes goes through the same four steps: take the instrument's lease, arm it, do the work, release. Locally, with <code>curl</code>:</p>
+<pre class="code"><code>$ K="curl -s --unix-socket /run/ktest.sock"
+$ $K -d '{"holder":"thermal sweep","ttl":"60s"}' http://ktest/psu/psu1/lease
+{"seq":1,"token":"9b1e…","ttl":"1m0s"}
+$ L="Ktest-Lease: 9b1e…"
+$ $K -H "$L" -X POST http://ktest/psu/psu1/arm
+$ $K -H "$L" -X PUT -d '{"value":0.5}'  http://ktest/channels/psu1.ch1.i.set
+$ $K -H "$L" -X PUT -d '{"value":5}'    http://ktest/channels/psu1.ch1.v.set
+$ $K -H "$L" -X PUT -d '{"value":true}' http://ktest/channels/psu1.ch1.out.set
+{"seq":5}
+$ $K -H "$L" -X PUT -d '{"ttl":"60s"}'  http://ktest/psu/psu1/lease     # renew before the term ends
+$ $K -H "$L" -X DELETE http://ktest/psu/psu1/lease</code></pre>
+<p>The answer to a write is a sequence number. The same number is on the record of that decision in the instrument's control stream, so a script can find what became of request 5 in the recording.</p>
+<p>If the script crashes, its lease runs out, and the instrument is disarmed: cyclic transmit stops, while a supply's outputs stay as they were, since cutting what a supply feeds is itself an act nobody asked for. Releasing the lease does the same. Use <code>POST /disarm</code> when the outputs must go off.</p>
+<h3>The bus</h3>
+<pre class="code"><code>$ $K -d '{"holder":"bench script"}' http://ktest/bus/can0/lease
+$ $K -H "$L" -X POST http://ktest/bus/can0/arm
+
+# one frame, by identifier and bytes
+$ $K -H "$L" -d '{"id":"0x123","data":"DEADBEEF"}' http://ktest/bus/can0/send
+
+# one frame, by message and signals in physical units (needs -dbc)
+$ $K -H "$L" -d '{"message":"EngineData","signals":{"EngineSpeed":3000,"Gear":"Reverse"}}' \
+     http://ktest/bus/can0/send
+
+# a cyclic frame every 10 ms, paced by the kernel; PUT again to change its data
+$ $K -H "$L" -X PUT -d '{"data":"0102","period":"10ms"}' http://ktest/bus/can0/cyclic/123
+$ $K -H "$L" -X DELETE http://ktest/bus/can0/cyclic/123</code></pre>
+<p>A signal left out takes the database's start value. A value is rounded to the nearest step the signal can represent and refused outside the range the database declares. Cyclic frames are sent by the kernel (<code>CAN_BCM</code>), not by the daemon's loop, so their timing does not depend on how busy the daemon or the script is.</p>
+<h3>Reading results</h3>
+<p>Results are not returned by requests. They are in the stream, which is an endless HTTP response in Logb format:</p>
+<pre class="code"><code>$ curl -N --cacert tls-cert.pem -H 'Authorization: Bearer 3f9c…' \
+       https://rack:8443/stream/live &gt; run.logb</code></pre>
+<p>That file is a valid recording from the moment the request starts: it opens with the schemas and the current value of every held channel, so a consumer that joins late knows that the supply was set to 12 V forty minutes ago. Read it with Logb's tools (<code>logbdump</code>, <code>logbview</code>) or its Go reader. <code>/stream/rack</code> is the same records uncompressed, with waveforms reduced to envelopes, which is what the browser reads.</p>
+<p>A reader for Python, so that a notebook can take values off the live stream as arrays, is <span class="st planned">planned</span>, as part of Logb and not of Ktest.</p>
+<h3>From Python</h3>
+<pre class="code"><code>import requests, time
+
+RACK = "https://rack:8443"
+s = requests.Session()
+s.verify = "tls-cert.pem"                      # the daemon's own certificate
+s.headers["Authorization"] = "Bearer " + open("token").read().strip()
+
+lease = s.post(f"{RACK}/psu/psu1/lease", json={"ttl": "60s"}).json()
+s.headers["Ktest-Lease"] = lease["token"]
+s.post(f"{RACK}/psu/psu1/arm").raise_for_status()
+try:
+    s.put(f"{RACK}/channels/psu1.ch1.i.set",   json={"value": 0.5})
+    s.put(f"{RACK}/channels/psu1.ch1.out.set", json={"value": True})
+    for mv in range(0, 12001, 500):            # 0 to 12 V in 0.5 V steps
+        r = s.put(f"{RACK}/channels/psu1.ch1.v.set", json={"value": mv / 1000})
+        if not r.ok:
+            print(r.status_code, r.json()["error"])
+        time.sleep(1)
+finally:
+    s.post(f"{RACK}/disarm")                   # outputs off, whatever happened
+    s.delete(f"{RACK}/psu/psu1/lease")</code></pre>
+<p>Over HTTPS the lease holder is the token's name and cannot be chosen, so the recording's word for who held the supply is one nobody could have typed in for someone else.</p>
+<h3>Scripts inside the daemon <span class="st planned">planned</span></h3>
+<p>A script run by a client stops when the client does. For sequences that must survive a disconnect, such as an overnight thermal run, the daemon will run Lua scripts itself, one per run, each under a lease like any other client. Limit conditions will become expressions (<code>v_out &gt; 4.75 &amp;&amp; v_out &lt; 5.25</code>) instead of fixed numbers. Neither will sit in the timing path: a script that stalls must not be able to stall the bus.</p>
+
+<h2 id="agents">1.6 With an LLM agent</h2>
+<p><span class="st proposed">proposed</span> Nothing in this section is built, and the names in it are placeholders. It describes how an agent is meant to fit, so that the design can be discussed before it is written.</p>
+<p>An agent is a script that decides its next step by itself. Ktest already has what such a client needs: commands are small, typed HTTP requests; every refusal comes back as a sentence saying what was wrong and what to do; and the limits are enforced by the daemon, not by the client's good behaviour. So an agent gets no interface of its own. It gets the REST interface, wrapped as tools.</p>
+<h3>What works today</h3>
+<p>An agent that has a shell, such as Claude Code, can drive a bench with <code>curl</code> exactly as <a href="#scripts">§1.5</a> shows. Give it a token of its own and the address, and tell it the channel names.</p>
+<h3>The tool server</h3>
+<p><code>ktest-mcp</code> would be a small separate program that speaks the Model Context Protocol on one side and Ktest's REST and stream on the other. It holds the token, so the model never sees it.</p>
+<pre class="code"><code>$ ktestd -new-token agent:operate 2&gt;&amp;1 &gt;&gt;tokens | tail -n 1 &gt; agent.token
+$ claude mcp add ktest -- ktest-mcp -url https://rack:8443 \
+      -token-file agent.token -cacert tls-cert.pem</code></pre>
+<div class="scroll"><table>
+<thead><tr><th>Tool</th><th>What it does</th><th>Role needed</th></tr></thead>
+<tbody>
+<tr><td><code>bench</code></td><td>lists the instruments, their kind, who holds each and whether it is armed, and the limits in force</td><td>view</td></tr>
+<tr><td><code>channels</code></td><td>lists channels with unit and current value; for a settable one, the set and the applied account</td><td>view</td></tr>
+<tr><td><code>read</code></td><td>returns a channel over a time window, reduced to at most a few hundred points with min and max kept</td><td>view</td></tr>
+<tr><td><code>waveform</code></td><td>returns the latest acquisition of a scope channel as an envelope, with its settings and simple measurements (peak to peak, mean, frequency)</td><td>view</td></tr>
+<tr><td><code>take_control</code>, <code>release</code></td><td>takes or gives back an instrument's lease; the server renews it while the session lives</td><td>operate</td></tr>
+<tr><td><code>arm</code></td><td>arms an instrument the agent holds</td><td>operate</td></tr>
+<tr><td><code>set</code></td><td>writes a settable channel, then waits for the applied account and returns asked, held and measured together</td><td>operate</td></tr>
+<tr><td><code>send</code>, <code>cyclic</code></td><td>puts a frame or a message on the bus, once or periodically</td><td>operate</td></tr>
+<tr><td><code>stop</code></td><td>disarms everything and switches outputs off</td><td>view</td></tr>
+</tbody>
+</table></div>
+<p>The <code>set</code> tool is the one place the agent's interface differs from a script's. A script is content with a sequence number. A model reasons better from the consequence, so the tool server follows the stream and answers with the three accounts after the write: "asked 12 V, the supply holds 6 V, 5.0 V measured".</p>
+<h3>What keeps it safe</h3>
+<ul>
+<li><strong>The limits file.</strong> An agent cannot ask for more than <code>limits.json</code> allows, and no request changes that file. Set the limits for the device under test before giving an agent the <code>operate</code> role.</li>
+<li><strong>Its own name.</strong> The agent logs in with its own token, so every decision it takes is recorded under that name, and the rack shows its name on the instruments it holds.</li>
+<li><strong>The lease.</strong> While a person holds an instrument, the agent cannot write to it, and the other way round.</li>
+<li><strong>STOP.</strong> A person watching the rack can stop the bench at any time without holding anything.</li>
+<li><strong>A view-only agent</strong> is useful by itself: it can watch a run, read the recording and explain what happened, and the most it can do to the bench is stop it.</li>
+</ul>
+<p>Two questions are open. Whether limits should be settable per name, so that an agent can be held to a narrower range than a person. And whether arming by an agent should need a person's confirmation on the rack.</p>
+
+<h2 id="programs">1.7 The programs</h2>
+<h4><code>ktestd</code>: the rack daemon</h4>
+<pre class="code"><code>ktestd [flags] interface</code></pre>
+<p>Owns one CAN interface and any number of instruments, records them, serves the rack and takes commands.</p>
+<div class="scroll"><table>
+<thead><tr><th>Flag</th><th>Default</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>-o file</code></td><td><code>&lt;interface&gt;.logb</code></td><td>the recording</td></tr>
+<tr><td><code>-dbc file</code></td><td></td><td>a CAN database: frames are decoded into signals beside the raw ones, and sends may name signals</td></tr>
+<tr><td><code>-psu name=host:port[,channels]</code></td><td></td><td>a bench supply to drive; repeatable</td></tr>
+<tr><td><code>-scope name=host:port[,channels][,full=ch1+ch2]</code></td><td></td><td>an oscilloscope to drive; repeatable. <code>full=</code> names the channels recorded at full rate</td></tr>
+<tr><td><code>-panel file</code></td><td></td><td>the rack panel: served to the browser, saved to from it, embedded in the recording</td></tr>
+<tr><td><code>-limits file</code></td><td>built in</td><td>the limits to enforce</td></tr>
+<tr><td><code>-sock path</code></td><td><code>/run/ktest.sock</code></td><td>the local control socket</td></tr>
+<tr><td><code>-https addr</code></td><td></td><td>control, streams and the rack over TLS, with tokens</td></tr>
+<tr><td><code>-tokens file</code></td><td></td><td>the names <code>-https</code> admits</td></tr>
+<tr><td><code>-new-token name:role</code></td><td></td><td>make a token and exit: the token on standard error, the line that admits it on standard output</td></tr>
+<tr><td><code>-tls-cert</code>, <code>-tls-key</code></td><td>self-signed</td><td>a certificate of your own</td></tr>
+<tr><td><code>-http addr</code></td><td></td><td>the streams only, read-only, unauthenticated</td></tr>
+<tr><td><code>-state dir</code></td><td><code>~/.local/state/ktestd</code></td><td>where the daemon keeps what it makes</td></tr>
+<tr><td><code>-d duration</code></td><td>0</td><td>stop after this long; 0 runs until interrupted</td></tr>
+<tr><td><code>-codec</code></td><td><code>zstd</code></td><td>compression of the recording: <code>none</code>, <code>deflate</code>, <code>zstd</code></td></tr>
+<tr><td><code>-segment duration</code></td><td>1 s</td><td>how often the recording restates its schemas and held values</td></tr>
+<tr><td><code>-psu-poll</code>, <code>-scope-poll</code></td><td>100 ms, 5 ms</td><td>how often supplies are measured and scopes asked for a completed acquisition</td></tr>
+<tr><td><code>-scope-sign</code>, <code>-scope-trigger-delay</code></td><td><code>sub256</code>, off</td><td>two readings of the Siglent programming guide that change the numbers (<a href="#waveforms">§3.5</a>)</td></tr>
+<tr><td><code>-err</code>, <code>-rcvbuf</code>, <code>-q</code></td><td>on, 1 MiB, off</td><td>receive error frames; the socket receive buffer; do not report what could not be carried across</td></tr>
+</tbody>
+</table></div>
+<h4><code>canlogb</code>: a CAN trace recorder</h4>
+<pre class="code"><code>canlogb [-o file] [-dbc file] [-d duration] [-http addr] interface</code></pre>
+<p>Records a bus to a Logb file and can serve it live, and does nothing else. It has no control plane, so it cannot put anything on the bus and does not have to be trusted not to. Use it where a recorder is all that is wanted.</p>
+<h4><code>logbcheck</code>: hold a recording to an independent account</h4>
+<pre class="code"><code>logbcheck [-tx log] [-cyclic] [-control] [-psu name=transcript] [-scope name=transcript]
+          recording.logb candump.log</code></pre>
+<p>Checks a recording against references that nothing in Ktest wrote: a <code>candump</code> log of the bus, a simulator's transcript. <code>-control</code> checks every control decision against the limits the recording itself declares. Give <code>/dev/null</code> as the log when there is no bus reference.</p>
+<h4><code>psusim</code>, <code>scopesim</code>: instruments without hardware</h4>
+<pre class="code"><code>psusim   [-addr :5025] [-channels 30:3:10,6:5:100] [-transcript file]
+scopesim [-addr :5026] [-channels 'sine:amp=1,freq=1000;dc:amp=0'] [-on 1] [-transcript file]</code></pre>
+<p><code>psusim</code> is a supply that speaks Keysight-style SCPI, clamps setpoints beyond a channel's rating and regulates into a resistive load (volts : amps : ohms per channel). <code>scopesim</code> is a Siglent SDS1202X-E with signals made from a description. Both keep a transcript for <code>logbcheck</code>.</p>
+<h4><code>vcanprobe</code>: what this kernel and adapter can do</h4>
+<pre class="code"><code>vcanprobe [-i vcan0] [-run regexp] [-list] [-json]</code></pre>
+
+<h2 id="refusals">1.8 When ktestd refuses</h2>
+<p>A refusal is a JSON body with an <code>error</code> sentence and, when the decision was recorded, its <code>seq</code>. Refusals are recorded like everything else.</p>
+<div class="scroll"><table>
+<thead><tr><th>Status</th><th>Meaning</th><th>What to do</th></tr></thead>
+<tbody>
+<tr><td><code>400</code></td><td>the request is malformed: an unknown key, a bad value, overlapping widgets in a panel</td><td>read the sentence; it names the key</td></tr>
+<tr><td><code>401</code></td><td>no token, or one this daemon does not admit</td><td>send <code>Authorization: Bearer &lt;token&gt;</code></td></tr>
+<tr><td><code>403</code></td><td>no lease presented; a <code>view</code> name asking to write; a setpoint above its limit; a cyclic period below the floor</td><td>take the lease, use an <code>operate</code> token, or stay inside the limits file</td></tr>
+<tr><td><code>404</code></td><td>no such instrument, channel or cyclic task</td><td></td></tr>
+<tr><td><code>409</code></td><td>the instrument is not armed, or someone else holds its lease</td><td>arm it; or wait, the rack shows who holds it</td></tr>
+<tr><td><code>412</code></td><td>a panel save from a panel no longer in force</td><td>reload and edit again</td></tr>
+<tr><td><code>428</code></td><td>a panel save without <code>If-Match</code></td><td>send the sha256 of the panel you edited</td></tr>
+<tr><td><code>503</code></td><td>the instrument is not answering or is busy, the kernel refused the frame, or the daemon is stopping</td><td>the sentence carries the kernel's error</td></tr>
+</tbody>
+</table></div>
+<p>The daemon also refuses to <em>start</em> on a configuration it cannot stand behind: a misspelt key in the limits or the panel file, a limit for a channel no instrument declares, two instruments with one name, a widget in a box that belongs to another instrument. A key that was meant to do something and would do nothing is treated as an error, not ignored.</p>
+</section>
+
+<section class="part" id="part-2">
+<h1 id="h-2">2 Setting up a bench</h1>
+
+<h2 id="channels">2.1 Channels</h2>
+<p>Everything on a bench is a channel in one flat namespace. Panels, scripts, limits and recordings all refer to channels by name, so names are fixed early and do not change.</p>
+<pre class="code"><code>EngineData.EngineSpeed       a bus signal, decoded by the DBC
+can0.raw                     every frame on the bus
+psu1.ch1.v.set               the voltage asked for
+psu1.ch1.v.applied           the voltage the supply reports holding
+psu1.ch1.meas.v              the voltage measured at the terminals
+scope1.ch1                   a waveform
+scope1.timebase.tdiv.set     seconds per division, asked for</code></pre>
+<p>A controlled quantity is kept as <strong>three accounts</strong>: what was asked (<code>set</code>), what the instrument accepted (<code>applied</code>) and what happened (<code>meas</code>). One channel for all three would make the recording wrong the first time an instrument clamps, refuses or trips. Kept apart, a recording answers "what did we ask for, what was accepted, what happened" without inference. The figure at the top of this manual is that, for one setpoint.</p>
+<div class="scroll"><table>
+<thead><tr><th>Kind of channel</th><th>Behaviour</th><th>Examples</th></tr></thead>
+<tbody>
+<tr><td><strong>held</strong></td><td>a record only when the value changes; the last value stands until the next. Restated at every segment, so a late reader knows the value in force.</td><td>setpoints, armed state, lease holder</td></tr>
+<tr><td><strong>sampled</strong></td><td>a record per sample or per frame, each with its time</td><td>bus frames, decoded signals, supply measurements</td></tr>
+<tr><td><strong>waveform</strong></td><td>dense samples on a uniform axis, one run per acquisition</td><td><code>scope1.ch1</code>, <code>scope1.ch1.env</code></td></tr>
+</tbody>
+</table></div>
+<p>A bus signal is named by its message today (<code>EngineData.EngineSpeed</code>). With a second bus the bus name will come first (<code>can1.EngineData.EngineSpeed</code>); that change is <span class="st planned">planned</span> before multi-bus support.</p>
+
+<h2 id="bus">2.2 Connecting a bus</h2>
+<p>Bring the interface up (<a href="#build-install">§1.2</a>), name it as the last argument, and give a DBC if there is one:</p>
+<pre class="code"><code>$ ktestd -dbc car.dbc -o run.logb can0</code></pre>
+<p>The bus is recorded in these streams:</p>
+<div class="scroll"><table>
+<thead><tr><th>Stream</th><th>What it holds</th></tr></thead>
+<tbody>
+<tr><td><code>&lt;bus&gt;.raw</code></td><td>every frame, with the kernel's receive timestamp, and whether it came from this host</td></tr>
+<tr><td><code>&lt;Message&gt;</code></td><td>with <code>-dbc</code>, each message decoded into its signals in physical units</td></tr>
+<tr><td><code>&lt;bus&gt;.tx.set</code></td><td>each send the daemon was asked for, refused ones included</td></tr>
+<tr><td><code>&lt;bus&gt;.tx.applied</code></td><td>each of those frames, handed back by the kernel as sent</td></tr>
+<tr><td><code>&lt;bus&gt;.cyclic.&lt;id&gt;</code></td><td>each cyclic task: every change, with the kernel's own account of the task beside the request</td></tr>
+<tr><td><code>&lt;bus&gt;.control</code></td><td>every decision the control plane took for the bus</td></tr>
+<tr><td><code>&lt;bus&gt;.drops</code></td><td>frames the kernel reported lost, as drops and never as silence</td></tr>
+</tbody>
+</table></div>
+<p>The DBC is embedded in the recording, so the file decodes itself later without it.</p>
+<p><strong>One bus per daemon</strong> today. Several buses, LIN (through a USB dongle or a Pico-based interface that carries CAN and LIN together), ISO-TP and J1939 (both through the kernel's own socket families, with no new hardware) are <span class="st planned">planned</span>.</p>
+
+<h2 id="instruments">2.3 Connecting instruments</h2>
+<p>An instrument is named on the command line. The name is the first part of every one of its channels, so choose it for the bench and not for the model: <code>psu1</code>, not <code>e36312a</code>.</p>
+<h3>A supply</h3>
+<pre class="code"><code>-psu psu1=192.168.1.20:5025,2        name = host:port, number of channels</code></pre>
+<p>SCPI over a raw TCP socket, the LXI port 5025, in the Keysight spelling (<code>VOLT 5,(@1)</code>) that the E36300 series and many others use.</p>
+<div class="scroll"><table>
+<thead><tr><th>Channel</th><th>Writable</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>psu1.chN.v.set</code>, <code>.v.applied</code></td><td>set</td><td>voltage setpoint, asked and held</td></tr>
+<tr><td><code>psu1.chN.i.set</code>, <code>.i.applied</code></td><td>set</td><td>current limit, asked and held</td></tr>
+<tr><td><code>psu1.chN.out.set</code>, <code>.out.applied</code></td><td>set</td><td>output on or off</td></tr>
+<tr><td><code>psu1.chN.meas.v</code>, <code>.meas.i</code></td><td></td><td>measured at the terminals, every <code>-psu-poll</code></td></tr>
+<tr><td><code>psu1.chN.connected</code></td><td></td><td>whether the supply is answering</td></tr>
+<tr><td><code>psu1.control</code></td><td></td><td>leases, arming, every write and refusal</td></tr>
+</tbody>
+</table></div>
+<p>A setpoint nobody has set since the daemon started is absent from the recording, not zero. Whatever the supply's error queue said after a write is recorded beside it.</p>
+<h3>An oscilloscope</h3>
+<pre class="code"><code>-scope scope1=192.168.1.30:5025,2,full=ch1      name = host:port, channels, full-rate channels</code></pre>
+<p>The Siglent SDS1202X-E dialect. The daemon arms the scope, waits for an acquisition, reads every displayed channel and starts again. Acquisition needs neither lease nor arming; changing a setting does.</p>
+<div class="scroll"><table>
+<thead><tr><th>Channel</th><th>Writable</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>scope1.chN.env</code></td><td></td><td>each acquisition as a min/max envelope, about 3000 columns; always recorded, and what the rack draws</td></tr>
+<tr><td><code>scope1.chN</code></td><td></td><td>every sample, in volts; only for channels named in <code>full=</code></td></tr>
+<tr><td><code>scope1.chN.vert.vdiv.set</code>, <code>.ofst.set</code>, <code>.on.set</code></td><td>set</td><td>volts per division, offset, channel displayed</td></tr>
+<tr><td><code>scope1.timebase.tdiv.set</code></td><td>set</td><td>seconds per division; the delay and memory depth likewise</td></tr>
+<tr><td><code>scope1.timebase.sara</code></td><td></td><td>the sample rate the scope chose</td></tr>
+<tr><td><code>scope1.acq</code></td><td></td><td>one record per channel per trigger, whatever became of it, drops included</td></tr>
+</tbody>
+</table></div>
+<p>Full rate is opt-in per channel because continuous full-rate capture should be a decision someone made, not a disk found full after an overnight run. One full-depth acquisition is 56 MB.</p>
+<p><strong>Status.</strong> Both drivers are built and checked against their simulators. Checking them against the real instruments, and placing a scope trigger on the recording's timeline by way of the scope's own CAN trigger, is the work in progress.</p>
+
+<h2 id="new-instruments">2.4 Adding an instrument</h2>
+<p>There are three cases, from a line of configuration to a new driver.</p>
+<h3>Another unit of a supported kind</h3>
+<p>Add another <code>-psu</code> or <code>-scope</code> with a new name. Each has its own lease, arming and control stream. Add its channels to the limits file and a box for it to the panel.</p>
+<h3>The same kind, another SCPI spelling</h3>
+<p>The commands a driver sends are a table, a <em>dialect</em>, and not code. A supply that spells things differently is a new table in <code>psu/</code>:</p>
+<pre class="code"><code>var Rigol = Dialect{
+    Name:      "rigol",
+    SetVolt:   ":SOUR%[1]d:VOLT %[2]s",     // argument 1 is the channel, 2 the value
+    QueryVolt: ":SOUR%[1]d:VOLT?",
+    SetCurr:   ":SOUR%[1]d:CURR %[2]s",
+    QueryCurr: ":SOUR%[1]d:CURR?",
+    SetOut:    ":OUTP CH%[1]d,%[2]s",
+    QueryOut:  ":OUTP? CH%[1]d",
+    MeasVolt:  ":MEAS:VOLT? CH%[1]d",
+    MeasCurr:  ":MEAS:CURR? CH%[1]d",
+    Identify:  "*IDN?", Clear: "*CLS", Err: ":SYST:ERR?",
+}</code></pre>
+<p>Today this needs a rebuild and the daemon uses the Keysight table. Choosing the dialect per instrument, <code>-psu psu1=host:port,2,dialect=rigol</code>, and loading dialect tables from a file without rebuilding, are <span class="st planned">planned</span>.</p>
+<h3>A new kind of instrument <span class="st planned">planned</span></h3>
+<p>Electronic loads, multimeters and function generators each need a driver, and USBTMC needs a transport beside TCP. A driver is a Go package, and the supply and the scope set the pattern that a new one follows:</p>
+<ol>
+<li><strong>Write the simulator first.</strong> It speaks the instrument's dialect, misbehaves the way the instrument does (clamps, rounds, reports errors only in its queue), and keeps a transcript of what it was told. The daemon is then built and checked before the hardware is plugged in, and the hardware later shows where the simulator was wrong.</li>
+<li><strong>Write the driver as a conversation.</strong> It says what the instrument was told and what it answered. It holds no limits, no leases and no opinion about what a setpoint should be; those are the daemon's.</li>
+<li><strong>Name the channels</strong> with the three accounts: <code>load1.ch1.i.set</code>, <code>.i.applied</code>, <code>load1.ch1.meas.v</code>.</li>
+<li><strong>Give it a control stream</strong> that states its kind, so that the rack and any other reader know what <code>load1</code> is without guessing from its name.</li>
+<li><strong>Decide what a stop does.</strong> An output goes off. An input is left alone.</li>
+<li><strong>Add its limits</strong> to the limits file's vocabulary, and a rule to <code>logbcheck</code> that holds the recording to the simulator's transcript.</li>
+</ol>
+<p>No new widget is needed. An instrument appears on the rack as a box of generic widgets bound to its channels, which is a panel and not code.</p>
+
+<h2 id="limits">2.5 Limits: <code>limits.json</code></h2>
+<p>The limits are the bounds no client can loosen, whatever role or lease it has. They are read once, at start. No request changes them.</p>
+<pre class="code"><code>{
+  "min_period": "1ms",
+  "channels": {
+    "psu1.ch1":        {"v_max": 12, "i_max": 1},
+    "scope1.timebase": {"msiz_max": 700000}
+  }
+}</code></pre>
+<div class="scroll"><table>
+<thead><tr><th>Key</th><th>Meaning</th><th>Without it</th></tr></thead>
+<tbody>
+<tr><td><code>min_period</code></td><td>the shortest period a cyclic frame may have, so that no task can flood the bus</td><td>1 ms</td></tr>
+<tr><td><code>channels.&lt;supply&gt;.chN.v_max</code>, <code>i_max</code></td><td>the highest voltage setpoint and current limit a client may ask for</td><td>no limit, recorded as "none"</td></tr>
+<tr><td><code>channels.&lt;scope&gt;.timebase.msiz_max</code></td><td>the deepest memory a client may ask for, which bounds the size of a readout</td><td>no limit</td></tr>
+</tbody>
+</table></div>
+<p>Set the limits for the device on the bench, not for the instrument: a 30 V supply feeding a 12 V module gets <code>v_max</code> 12. The limits in force are written into every recording, and the file is attached to it. Limits as expressions over channels are <span class="st planned">planned</span>.</p>
+
+<h2 id="access">2.6 Access: tokens, roles and TLS</h2>
+<pre class="code"><code>$ ktestd -new-token rolf:operate &gt;&gt; tokens      # the token itself is printed on the terminal
+$ ktestd -new-token display:view &gt;&gt; tokens
+$ ktestd -https :8443 -tokens tokens can0</code></pre>
+<p>The tokens file holds one line per name, <code>name role sha256</code>. It never holds a token, so reading it admits nobody.</p>
+<div class="scroll"><table>
+<thead><tr><th>Role</th><th>May</th></tr></thead>
+<tbody>
+<tr><td><code>view</code></td><td>read the streams, open the rack, and stop</td></tr>
+<tr><td><code>operate</code></td><td>also take leases, arm, write channels, transmit, and save panels</td></tr>
+</tbody>
+</table></div>
+<p>Without <code>-tls-cert</code> and <code>-tls-key</code> the daemon makes a self-signed certificate once, keeps it in its state directory and prints its fingerprint. A script should trust that certificate (<code>curl --cacert ~/.local/state/ktestd/tls-cert.pem</code>) or pin its key, and not switch verification off.</p>
+<p>The recording lists the names and roles that were admitted, never the hashes, and every control decision records who asked and through which listener.</p>
+
+<h2 id="panels">2.7 Panels: <code>panel.json</code></h2>
+<p>A panel is the layout of a rack: boxes, one per instrument, each a grid of widgets bound to channels by name. It is data. The browser builds the rack from it, and the recording carries it.</p>
+<pre class="code"><code>{
+  "title": "Bench: supply and scope",
+  "groups": [
+    {
+      "instrument": "psu1",
+      "label": "Bench supply / 30 V 3 A",
+      "widgets": [
+        {"type": "knob",   "channel": "psu1.ch1.v.set", "label": "ch1 voltage",
+         "step": 0.1, "max": 12,                       "x": 0, "y": 0, "w": 2, "h": 3},
+        {"type": "gauge",  "channel": "psu1.ch1.meas.v", "label": "ch1 measured",
+         "max": 12,                                    "x": 2, "y": 0, "w": 3, "h": 3},
+        {"type": "toggle", "channel": "psu1.ch1.out.set", "label": "ch1 output",
+                                                       "x": 5, "y": 0, "w": 2, "h": 2},
+        {"type": "plot",   "channels": ["psu1.ch1.meas.v", "psu1.ch1.meas.i"],
+         "window": 20,                                 "x": 0, "y": 3, "w": 12, "h": 4}
+      ]
+    },
+    {
+      "instrument": "scope1",
+      "label": "Oscilloscope / SDS1202X-E",
+      "widgets": [
+        {"type": "scope",    "channel": "scope1.ch1", "label": "C1",
+                                                       "x": 0, "y": 0, "w": 8, "h": 5},
+        {"type": "setpoint", "channel": "scope1.timebase.tdiv.set", "label": "Seconds/div",
+                                                       "x": 8, "y": 0, "w": 4, "h": 2}
+      ]
+    }
+  ]
+}</code></pre>
+<h3>The panel</h3>
+<div class="scroll"><table>
+<thead><tr><th>Key</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>title</code></td><td>shown at the top of the rack</td></tr>
+<tr><td><code>columns</code></td><td>the grid's width in cells, 1 to 48; 12 when unsaid</td></tr>
+<tr><td><code>groups</code></td><td>the boxes, drawn top to bottom in the order given</td></tr>
+<tr><td><code>widgets</code></td><td>instead of <code>groups</code>: one unnamed grid. A panel has one or the other.</td></tr>
+</tbody>
+</table></div>
+<h3>A group</h3>
+<div class="scroll"><table>
+<thead><tr><th>Key</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>instrument</code></td><td>the name the recording knows the instrument by. Every widget in the box must be bound to that instrument's channels. The box's header shows the instrument's kind, holder and arming; the kind comes from the recording and is never stated here.</td></tr>
+<tr><td><code>label</code></td><td>what the box is called on screen</td></tr>
+<tr><td><code>columns</code></td><td>this box's grid width; the panel's when unsaid</td></tr>
+<tr><td><code>widgets</code></td><td>the widgets; <code>x</code> and <code>y</code> are the box's own, so a box moves up or down without its contents being renumbered</td></tr>
+</tbody>
+</table></div>
+<h3>A widget</h3>
+<p>Every widget has <code>type</code>, a place (<code>x</code>, <code>y</code>, <code>w</code>, <code>h</code> in grid cells) and an optional <code>label</code>. Widgets lie inside the grid and clear of each other.</p>
+<div class="scroll"><table>
+<thead><tr><th>Type</th><th>Bound to</th><th>Other keys</th></tr></thead>
+<tbody>
+<tr><td><code>readout</code></td><td><code>channel</code></td><td></td></tr>
+<tr><td><code>gauge</code></td><td><code>channel</code></td><td><code>min</code>, <code>max</code>: the scale; 0 to 100 when unsaid</td></tr>
+<tr><td><code>lamp</code></td><td><code>channel</code></td><td></td></tr>
+<tr><td><code>plot</code></td><td><code>channels</code>, a list</td><td><code>window</code>: seconds shown</td></tr>
+<tr><td><code>scope</code></td><td><code>channel</code>, a scope channel such as <code>scope1.ch1</code></td><td></td></tr>
+<tr><td><code>setpoint</code></td><td><code>channel</code>, a number that can be set</td><td><code>step</code></td></tr>
+<tr><td><code>knob</code>, <code>slider</code></td><td><code>channel</code>, a number that can be set</td><td><code>min</code>, <code>max</code>, <code>step</code></td></tr>
+<tr><td><code>enum</code></td><td><code>channel</code>, a number that can be set</td><td><code>options</code>: at least two <code>{"value": 3.3, "label": "3V3 logic"}</code>, no value twice</td></tr>
+<tr><td><code>toggle</code>, <code>button</code></td><td><code>channel</code>, a switch such as <code>out.set</code> or <code>on.set</code></td><td></td></tr>
+</tbody>
+</table></div>
+<p>A scale says what is worth asking for and enforces nothing. A knob whose scale ends at 12 V does not stop a script from asking for 20; the limits file does.</p>
+<p>Several widgets may be bound to one channel. A knob, a typed setpoint and a preset selector on <code>psu1.ch1.v.set</code> all follow each other, because each reads the value back from the recording and none from another.</p>
+<p>The panel is checked when the daemon starts, and the daemon does not start on a panel it cannot stand behind. Whether a channel exists is not checked then, since a panel is written before its streams arrive and must replay against a recording; the rack says so beside the widget.</p>
+
+<h2 id="editing-panels">2.8 Designing a panel in the rack</h2>
+<p>The quickest way to a panel is to start the daemon with a nearly empty one and lay it out in the browser.</p>
+<pre class="code"><code>$ echo '{"title": "My bench", "groups": [{"instrument": "psu1", "widgets": []}]}' &gt; rack.json
+$ ktestd -https :8443 -tokens tokens -panel rack.json -psu psu1=192.168.1.20:5025,2 can0</code></pre>
+<ol>
+<li>Press <strong>Edit panel</strong>. The widgets go on drawing live data while you edit.</li>
+<li><strong>Add</strong> puts a new widget below the rest of its box. Click it to choose its type, channel and label.</li>
+<li>Drag a widget to move it. Drag its lower right corner to resize it. ✕ removes it.</li>
+<li><strong>Save</strong>. The panel is checked by the daemon exactly as the file is at start, written back to the <code>-panel</code> file with one widget to a line, and embedded in the recording again. Every other page showing the rack changes with it.</li>
+</ol>
+<p>If two people edit at once, the second save is refused and says why, because it was edited from a panel that is no longer in force. Reload and make the change again. A <code>view</code> name cannot save.</p>
+<p>Give the daemon a copy of a panel you want to keep unchanged, as the demos do with <code>rack.json</code> made from <code>panel.json</code>, since a save overwrites the file it was started with.</p>
+<p>Moving a widget from one box into another by dragging, and adding or reordering boxes in the editor, are <span class="st planned">planned</span>. Today a widget changes boxes by being removed and added again, and boxes are added in the file.</p>
+<h3>Some advice on layout</h3>
+<ul>
+<li>One box per instrument, named as the bench names it. The header then tells you at a glance who holds what.</li>
+<li>Put what is measured beside what is set. A knob for the voltage next to a gauge for the measured voltage shows a current limit biting the moment it happens.</li>
+<li>Give every supply a lamp on <code>connected</code> and on <code>out.applied</code>. An output that is on should be visible from across the room.</li>
+<li>Set a knob's or a slider's <code>max</code> to the limit in <code>limits.json</code>, so the scale covers what can be asked for.</li>
+<li>Use an <code>enum</code> for the few values that have names on this bench (3V3, 5 V, 12 V rail) and a typed <code>setpoint</code> for the rest.</li>
+<li>Use a <code>button</code> for anything that should be on only while someone is there holding it. It is a convenience and not an interlock; arming and STOP are the interlocks.</li>
+</ul>
+
+<h2 id="the-recording">2.9 The recording</h2>
+<p>The recording is a <a href="https://github.com/rveen/logb" target="_blank" rel="noopener">Logb</a> file: an open, MIT-licensed format for test data whose frames are self-describing, length-prefixed and checksummed. A Ktest recording is complete in itself. It contains:</p>
+<div class="scroll"><table>
+<thead><tr><th>Content</th><th>Why</th></tr></thead>
+<tbody>
+<tr><td>every channel, with its name, unit and scaling</td><td>no database is needed to read it later</td></tr>
+<tr><td>every control decision and refusal, with who asked</td><td>the file says what was done to the bench, not only what was seen</td></tr>
+<tr><td>the DBC, the limits and the panel, as attachments</td><td>it decodes itself, states what was allowed, and brings back the rack that watched it</td></tr>
+<tr><td><code>rack.panel</code></td><td>which panel was on screen when, with each save and who made it</td></tr>
+<tr><td>provenance: interface and adapter, kernel and daemon versions, the timestamp source of each stream, instrument identification strings, the admitted names and the certificate's fingerprint</td><td>a measurement from 2027 should be reconstructable in 2030</td></tr>
+<tr><td>drops, as records</td><td>a gap that does not say it is a gap is the worst thing a recording can contain</td></tr>
+</tbody>
+</table></div>
+<p>The file on disk and the bytes on <code>/stream/live</code> are the same format, so a recording cut anywhere is still readable: a reader finds the next segment and has the schemas and the held values it needs. Tools:</p>
+<div class="scroll"><table>
+<thead><tr><th>Tool</th><th>From</th><th>Use</th></tr></thead>
+<tbody>
+<tr><td><code>logbview</code></td><td>Logb</td><td>browse a recording as plots; <code>-follow</code> for one still being written</td></tr>
+<tr><td><code>logbdump</code></td><td>Logb</td><td>print a recording's frames and values as text</td></tr>
+<tr><td><code>logbcheck</code></td><td>Ktest</td><td>hold a recording to an independent reference (<a href="#programs">§1.7</a>)</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section class="part" id="part-3">
+<h1 id="h-3">3 The design</h1>
+
+<h2 id="four-properties">3.1 Four properties</h2>
+<ol>
+<li><strong>The daemon owns the hardware.</strong> Connections stay open, access is leased, and a run survives the browser disconnecting.</li>
+<li><strong>Everything produced is a Logb stream.</strong> The file on disk and the bytes on the wire are one format. Live view and replay share one decoder.</li>
+<li><strong>Control is asymmetric.</strong> Commands go in over REST; results come back only on the stream. A widget is never the source of truth.</li>
+<li><strong>Timing lives below the daemon.</strong> Cyclic transmit is configured into the kernel and timestamps are taken by it. The daemon's event loop is never what paces a bus.</li>
+</ol>
+<p>The daemon is a plain user process in one static binary. It is Linux only; Windows and macOS reach it through the browser.</p>
+
+<h2 id="control-in-results-out">3.2 Commands in, results out</h2>
+<p>A request returns accepted or refused and a sequence number. It does not return state. The resulting <code>set</code>, <code>applied</code> and <code>meas</code> values arrive on the stream like everything else. What this buys:</p>
+<ul>
+<li>Two browsers, a script and an agent see the same bench, because there is one account of it and none of them holds a private copy.</li>
+<li>A page reload, or a client that connects halfway through a run, recovers the whole rack from the stream's opening segment. There is no "get current state" request that could disagree with the stream.</li>
+<li>Replay drives the display through the same path as live.</li>
+<li>The data connection is one-way, so it is an ordinary HTTP response and not a WebSocket. <code>curl &gt; run.logb</code> is a recording, a slow client slows its own connection and nothing else, and a reconnect resynchronises by itself.</li>
+</ul>
+<p>The cost is at the widget, which must show an unconfirmed value as unconfirmed and commit a drag on release instead of sending every intermediate value.</p>
+
+<h2 id="safety">3.3 Safety</h2>
+<p>The browser is an actuator, and so is a script and so is an agent. Nothing is sent by default.</p>
+<div class="scroll"><table>
+<thead><tr><th>Mechanism</th><th>Rule</th></tr></thead>
+<tbody>
+<tr><td><strong>Limits</strong></td><td>per channel, in the daemon, read once at start, independent of what any panel or client permits</td></tr>
+<tr><td><strong>Lease</strong></td><td>one writer per instrument, with a term. A client that stops renewing loses it, so a crashed script cannot block the lab.</td></tr>
+<tr><td><strong>Arming</strong></td><td>explicit, per instrument. Only an armed instrument takes writes.</td></tr>
+<tr><td><strong>Stop</strong></td><td>anyone who can reach the daemon may disarm. Outputs go off; inputs are left alone.</td></tr>
+<tr><td><strong>Disconnect</strong></td><td>per class. When a lease ends, cyclic transmit stops, and a supply holds its output. If the daemon itself dies, the kernel stops every cyclic task it had.</td></tr>
+<tr><td><strong>Identity</strong></td><td>over the network, TLS and a named token on every request. A lease belongs to the name that took it.</td></tr>
+<tr><td><strong>Replay</strong></td><td>never actuates <span class="st planned">planned</span></td></tr>
+</tbody>
+</table></div>
+<p>Every one of these decisions is recorded, refusals included, so the rules can be checked afterwards against the recording. <code>logbcheck -control</code> does that.</p>
+
+<h2 id="timing">3.4 Timing</h2>
+<p>Ktest is not a real-time system and does not pretend to be. Two things are delegated to the kernel:</p>
+<ul>
+<li><strong>Cyclic transmit</strong> is <code>CAN_BCM</code>. Measured on a virtual bus at a 1 ms period, its frame-to-frame jitter is 31 µs at the median and 76 µs at the 99th percentile; a userspace loop manages 166 µs and 983 µs. A cyclic task keeps no timetable: each interval runs a few tens of µs long, so over minutes the count falls slightly short of duration over period.</li>
+<li><strong>Receive timestamps</strong> are the kernel's. A frame that arrives without one is recorded as unstamped, never as time zero. Hardware timestamps from the controller, with the recording saying which clock each stream is on, are <span class="st planned">planned</span> with the MCP2518FD interface.</li>
+</ul>
+<p>Reacting to a frame within microseconds is not something a script or the daemon's loop will ever do. It is kernel configuration or instrument hardware. Scripts are for orchestration at human and millisecond scales: sweep a parameter, step a supply, wait for a signal.</p>
+<p>Bus frames are never dropped silently. When the kernel reports a loss, the loss is a record. When a reader simply stalls, the kernel reports nothing, so the daemon does not take silence as proof that nothing was lost.</p>
+
+<h2 id="waveforms">3.5 Waveforms</h2>
+<p>An acquisition can be 14 million samples, and a browser has about a thousand pixels across. The daemon reduces each acquisition to a <strong>min/max envelope</strong> of some 3000 columns. A spike one sample wide is still in it, which every-nth-point decimation would lose. The rack draws the envelope as a band; the recording keeps the envelope always and the full samples for the channels you name.</p>
+<p>A sample is stored as 32-bit float volts. Storing the digitiser's 8-bit code would be four times smaller, but then every turn of the volts/div knob would change the stream's schema and with it the stream's identity, and <code>scope1.ch1</code> must mean one thing for a whole session. The code is not lost: the conversion in force is recorded with every acquisition, so it can be recovered exactly.</p>
+<p>The settings an acquisition was taken under travel with it, and the rack shows those under each trace, not whatever the instrument holds by the time it is drawn. A change of the sample interval opens a new segment in the recording, so that no sample can be decoded to the wrong position.</p>
+<p>If the rack's stream cannot keep up, an acquisition is left out of it and recorded as a drop in <code>scope1.acq</code>. The recording on disk still has it.</p>
+<p>Two readings of Siglent's programming guide disagree between its revisions: how a code above 127 becomes negative, and whether the trigger delay shifts the time axis. They are settings (<code>-scope-sign</code>, <code>-scope-trigger-delay</code>), written into every acquisition, until the instrument settles them.</p>
+
+<h2 id="not">3.6 What Ktest is not</h2>
+<ul>
+<li><strong>Not a production end-of-line system.</strong> No operator mode, no yield reporting, no shop-floor integration.</li>
+<li><strong>Not an IDE, a report generator or a requirements tool.</strong></li>
+<li><strong>Not a real-time system.</strong> Sub-millisecond deterministic response belongs to the kernel or the instrument.</li>
+<li><strong>Not tied to one vendor's hardware.</strong> SocketCAN adapters and SCPI instruments; no Vector VN interfaces.</li>
+<li><strong>Not automotive Ethernet.</strong> That is a separate project.</li>
+</ul>
+
+<h2 id="status">3.7 Status and roadmap</h2>
+<p>Ktest is built in milestones, each usable alone. This manual describes the whole; this table says how much of it exists (<code>ktestd 0.4</code>).</p>
+<div class="scroll"><table>
+<thead><tr><th></th><th>Milestone</th><th>Status</th></tr></thead>
+<tbody>
+<tr><td>1</td><td><strong>Record.</strong> SocketCAN in, Logb out, live view, DBC decoding</td><td><span class="st built">built</span></td></tr>
+<tr><td>2</td><td><strong>Transmit.</strong> Single and cyclic sends, by bytes or by signal; leases, arming, limits; TLS and roles</td><td><span class="st built">built</span></td></tr>
+<tr><td>3</td><td><strong>Panels.</strong> The rack, the widget set, the panel editor, the supply driver</td><td><span class="st built">built</span>, except the trace table</td></tr>
+<tr><td>4</td><td><strong>Scope and waveforms.</strong> The scope driver, envelopes, the scope widget</td><td><span class="st built">built</span> against the simulator</td></tr>
+<tr><td></td><td>The real SDS1202X-E; hardware timestamps; the scope's trigger on the recording's timeline</td><td><span class="st planned">in progress</span></td></tr>
+<tr><td>5</td><td><strong>Scripting.</strong> Lua in the daemon, then limit expressions</td><td><span class="st planned">planned</span></td></tr>
+<tr><td></td><td>Replay in the rack; packaging as a service; more instrument kinds and dialects by configuration; USBTMC</td><td><span class="st planned">planned</span></td></tr>
+<tr><td></td><td>Several buses; LIN; ISO-TP; J1939</td><td><span class="st planned">planned</span></td></tr>
+<tr><td></td><td>The agent tool server</td><td><span class="st proposed">proposed</span></td></tr>
+</tbody>
+</table></div>
+<p>The design is written down in full, with its measurements and the decisions that were rejected, in <code>doc/test-software-outline.md</code>.</p>
+</section>
+
+    <footer class="end">Ktest user manual · prospective, written against ktestd 0.4 · Truke</footer>
+  </main>
+</div>
+
+<script>
+(() => {
+  // Mark the section being read in the contents.
+  const links = new Map();
+  document.querySelectorAll('nav.toc li.p li a').forEach((a) => links.set(a.getAttribute('href').slice(1), a));
+  const heads = [...document.querySelectorAll('.part h2[id]')].filter((h) => links.has(h.id));
+  if (!heads.length || !('IntersectionObserver' in window)) return;
+  let current = null;
+  const mark = (id) => {
+    if (id === current) return;
+    if (current) links.get(current)?.classList.remove('here');
+    current = id;
+    const a = links.get(id);
+    if (!a) return;
+    a.classList.add('here');
+    const nav = a.closest('nav.toc');
+    const r = a.getBoundingClientRect(), n = nav.getBoundingClientRect();
+    if (r.top < n.top || r.bottom > n.bottom) nav.scrollTop += r.top - n.top - n.height / 3;
+  };
+  const io = new IntersectionObserver(() => {
+    let best = heads[0];
+    for (const h of heads) {
+      if (h.getBoundingClientRect().top < window.innerHeight * 0.3) best = h;
+      else break;
+    }
+    mark(best.id);
+  }, { rootMargin: '0px 0px -60% 0px', threshold: [0, 1] });
+  heads.forEach((h) => io.observe(h));
+})();
+</script>
+
+</body></html>
