@@ -622,6 +622,9 @@ $ claude mcp add ktest -- ktest-mcp -url https://rack:8443 \
 <h4><code>canlogb</code>: a CAN trace recorder</h4>
 <pre class="code"><code>canlogb [-o file] [-dbc file] [-d duration] [-http addr] interface</code></pre>
 <p>Records a bus to a Logb file and can serve it live, and does nothing else. It has no control plane, so it cannot put anything on the bus and does not have to be trusted not to. Use it where a recorder is all that is wanted.</p>
+<h4><code>monitor-check</code>: replay a recording through a DUT contract</h4>
+<pre class="code"><code>monitor-check [-json] [-expect ok | -expect dev@t1,t2,...] [-tol 50ms] [-mode mode.applied] dut-interface.json recording.logb</code></pre>
+<p>Replays a recording through the monitors a DUT contract declares, with the same evaluator the DUT rack will run live, and prints every transition: when, which monitor, from what to what, and why (a stream's sample, a debounce running out, an input going stale). The evaluator reads no clock, so a replay gives the transitions the live run gave, to the nanosecond, and a contract can be tried on yesterday's recording before it is signed off. <code>-expect ok</code> fails if any monitor deviates; <code>-expect dev@2.55,5.15</code> fails unless a deviation begins near each time given, and only there. <span class="st built">built</span>; the live evaluator in the daemon is <span class="st planned">planned</span>.</p>
 <h4><code>logbcheck</code>: hold a recording to an independent account</h4>
 <pre class="code"><code>logbcheck [-tx log] [-cyclic] [-control] [-psu name=transcript] [-scope name=transcript]
           recording.logb candump.log</code></pre>

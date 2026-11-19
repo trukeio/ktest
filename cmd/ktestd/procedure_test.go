@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rveen/ktest/channel"
 	"github.com/rveen/ktest/expr"
 	"github.com/rveen/ktest/procedure"
 	"github.com/rveen/ktest/procedure/lib"
@@ -134,10 +135,10 @@ func ptr[T any](v T) *T { return &v }
 // names have dots in them, and a guarded field the latest record lacks has
 // no value.
 func TestChanTable(t *testing.T) {
-	c := newChanTable()
+	c := channel.NewTable()
 	ch, meas := chanSchema("psu1", 1), measSchema("psu1", 1)
-	c.onStream(ch)
-	c.onStream(meas)
+	c.Stream(ch)
+	c.Stream(meas)
 
 	for name, want := range map[string]expr.Type{
 		"psu1.ch1.v.set":       expr.NumberIn("V"),
@@ -151,10 +152,14 @@ func TestChanTable(t *testing.T) {
 			t.Errorf("%s: %v, %v", name, got, err)
 		}
 	}
-	for _, name := range []string{"psu1.ch1.v", "psu2.ch1.meas.v", "psu1.ch1.t", "psu1.ch1.meas"} {
-		if _, err := c.Resolve(name); err == nil || !strings.Contains(err.Error(), "not a channel of this daemon") {
+	for _, name := range []string{"psu1.ch1.v", "psu2.ch1.meas.v", "psu1.ch1.t"} {
+		if _, err := c.Resolve(name); err == nil || !strings.Contains(err.Error(), "is not a channel here") {
 			t.Errorf("%s: %v", name, err)
 		}
+	}
+	// A stream named whole is an event: samples, and no value.
+	if typ, err := c.Resolve("psu1.ch1.meas"); err != nil || typ.Kind != expr.Event {
+		t.Errorf("psu1.ch1.meas: %v, %v", typ, err)
 	}
 	if _, _, ok := c.Value("psu1.ch1.meas.v"); ok {
 		t.Error("a value before any record")
@@ -163,7 +168,7 @@ func TestChanTable(t *testing.T) {
 	rec := make([]byte, meas.RecordBytes())
 	putUint64(rec[8:], fbits(11.5))
 	at := time.Unix(100, 0)
-	c.onRecord(meas, at, rec)
+	c.Record(meas, at, rec)
 	rec[8] = 0xFF // the table keeps a copy, not the writer's buffer
 	if v, ts, ok := c.Value("psu1.ch1.meas.v"); !ok || v.Num != 11.5 || ts != at.UnixNano() {
 		t.Errorf("meas.v = %+v at %d, %v", v, ts, ok)
@@ -171,7 +176,7 @@ func TestChanTable(t *testing.T) {
 
 	// A supply channel record with nothing set yet: v.set's guard is clear.
 	crec := make([]byte, ch.RecordBytes())
-	c.onRecord(ch, at, crec)
+	c.Record(ch, at, crec)
 	if _, _, ok := c.Value("psu1.ch1.v.set"); ok {
 		t.Error("v.set has a value nobody set")
 	}
@@ -185,8 +190,8 @@ func TestChanTable(t *testing.T) {
 	a.Fields[1].Name = "z.v"
 	b := measSchema("x", 1)
 	b.Name = "x.y.z"
-	c.onStream(a)
-	c.onStream(b)
+	c.Stream(a)
+	c.Stream(b)
 	if _, err := c.Resolve("x.y.z.v"); err == nil || !strings.Contains(err.Error(), "ambiguous") {
 		t.Errorf("x.y.z.v: %v", err)
 	}
@@ -197,10 +202,10 @@ func fbits(v float64) uint64 { return math.Float64bits(v) }
 // TestExampleProcedureLoads holds the supply bench's procedure to the daemon
 // the demo starts: its channels, its supply, its library.
 func TestExampleProcedureLoads(t *testing.T) {
-	table := newChanTable()
+	table := channel.NewTable()
 	for ch := 1; ch <= 2; ch++ {
-		table.onStream(chanSchema("psu1", ch))
-		table.onStream(measSchema("psu1", ch))
+		table.Stream(chanSchema("psu1", ch))
+		table.Stream(measSchema("psu1", ch))
 	}
 	d := &daemon{supplies: map[string]int{"psu1": 2}}
 	p := newProcs(d, "../../examples/supply-bench/procedures", table)

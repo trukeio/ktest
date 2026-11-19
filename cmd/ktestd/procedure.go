@@ -19,6 +19,7 @@ import (
 
 	"github.com/rveen/logb"
 
+	"github.com/rveen/ktest/channel"
 	"github.com/rveen/ktest/expr"
 	"github.com/rveen/ktest/procedure"
 	"github.com/rveen/ktest/procedure/lib"
@@ -64,7 +65,7 @@ var (
 type procs struct {
 	d     *daemon
 	dir   string
-	table *chanTable
+	table *channel.Table
 	lib   *procedure.Library
 
 	hard   context.Context // cancelled when the daemon stops
@@ -93,7 +94,7 @@ type procRun struct {
 	mu     sync.Mutex
 }
 
-func newProcs(d *daemon, dir string, table *chanTable) *procs {
+func newProcs(d *daemon, dir string, table *channel.Table) *procs {
 	p := &procs{d: d, dir: dir, table: table}
 	p.hard, p.cancel = context.WithCancel(context.Background())
 	p.lib = lib.New(&rackAdapter{p: p})
@@ -408,131 +409,6 @@ func (a *rackAdapter) Result(sr lib.StepResult) {
 		return
 	}
 	a.p.job(func(l *loop) { a.p.recordResult(l, run.n, sr) })
-}
-
-// chanTable is the daemon's internal subscription: every stream the recording
-// declares, and each one's latest record, for a procedure's conditions to
-// read. It is fed on the loop's goroutine by the recording's writer, and read
-// on a run's, so it has a lock of its own.
-type chanTable struct {
-	mu      sync.RWMutex
-	streams map[string]*chanStream
-}
-
-type chanStream struct {
-	s    *logb.Schema
-	rec  []byte
-	t    time.Time
-	have bool
-}
-
-func newChanTable() *chanTable { return &chanTable{streams: map[string]*chanStream{}} }
-
-func (c *chanTable) onStream(s *logb.Schema) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if _, ok := c.streams[s.Name]; !ok {
-		c.streams[s.Name] = &chanStream{s: s}
-	}
-}
-
-func (c *chanTable) onRecord(s *logb.Schema, t time.Time, rec []byte) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	cs, ok := c.streams[s.Name]
-	if !ok {
-		cs = &chanStream{s: s}
-		c.streams[s.Name] = cs
-	}
-	cs.rec = append(cs.rec[:0], rec...)
-	cs.t, cs.have = t, true
-}
-
-// split finds the stream and field a name means. Field names have dots in
-// them (v.set), so a name is tried at every dot; exactly one split may name a
-// stream that has that field.
-func (c *chanTable) split(name string) (*chanStream, int, error) {
-	var found *chanStream
-	fi := -1
-	var splits []string
-	for i := len(name) - 1; i > 0; i-- {
-		if name[i] != '.' {
-			continue
-		}
-		cs, ok := c.streams[name[:i]]
-		if !ok {
-			continue
-		}
-		for k, f := range cs.s.Fields {
-			if k != int(cs.s.AxisField) && f.Name == name[i+1:] {
-				found, fi = cs, k
-				splits = append(splits, name[:i]+" and its field "+f.Name)
-			}
-		}
-	}
-	switch len(splits) {
-	case 0:
-		return nil, 0, fmt.Errorf("%s is not a channel of this daemon: no stream it records has that field", name)
-	case 1:
-		return found, fi, nil
-	}
-	return nil, 0, fmt.Errorf("%s is ambiguous: it names %s", name, strings.Join(splits, ", and "))
-}
-
-func fieldType(f *logb.Field) (expr.Type, error) {
-	switch f.Conv.(type) {
-	case logb.ValueToText, logb.RangeToText:
-		return expr.Type{Kind: expr.String}, nil
-	}
-	switch f.Type {
-	case logb.TypeBool:
-		return expr.Type{Kind: expr.Bool}, nil
-	case logb.TypeString:
-		return expr.Type{Kind: expr.String}, nil
-	case logb.TypeUint, logb.TypeSint, logb.TypeFloat:
-		return expr.NumberIn(f.Unit), nil
-	}
-	return expr.Type{}, fmt.Errorf("field %s holds bytes; a condition reads numbers, truth values and text", f.Name)
-}
-
-func (c *chanTable) Resolve(name string) (expr.Type, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	cs, fi, err := c.split(name)
-	if err != nil {
-		return expr.Type{}, err
-	}
-	return fieldType(&cs.s.Fields[fi])
-}
-
-// Value is a channel's latest value, in its schema's unit. A field the latest
-// record does not carry — a guard that does not hold — has none.
-func (c *chanTable) Value(name string) (expr.Value, int64, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	cs, fi, err := c.split(name)
-	if err != nil || !cs.have {
-		return expr.Unknown, 0, false
-	}
-	b := &logb.Batch{Schema: cs.s, Count: 1, Data: cs.rec}
-	v, err := b.Value(0, fi)
-	if err != nil {
-		return expr.Unknown, 0, false
-	}
-	t := cs.t.UnixNano()
-	switch x := v.(type) {
-	case bool:
-		return expr.BoolValue(x), t, true
-	case string:
-		return expr.StrValue(x), t, true
-	case float64:
-		return expr.Num(x), t, true
-	case uint64:
-		return expr.Num(float64(x)), t, true
-	case int64:
-		return expr.Num(float64(x)), t, true
-	}
-	return expr.Unknown, 0, false
 }
 
 // The procedure streams' record layouts, in bytes.

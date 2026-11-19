@@ -386,6 +386,23 @@ Moved forward by §2.1 C1: the executor is ktestd's scripting, useful before a s
   - the `inactive` and `settling` states;
   - deadline timestamps from `age()`;
   - replay determinism.
+- **Done (2026-11-19).** Package `monitor` (contract loader and evaluator), package `channel` (stream.field resolution, moved out of `ktestd` so that the daemon and `monitor-check` share it), and `cmd/monitor-check`. The fixture is a `ktestd` recording of the supply bench running its ramp procedure: `cmd/monitor-check/testdata/supply-ramp.logb`.
+
+#### M3: choices for review
+
+- **A stale input makes its values unknown, not the monitor.** §4.3 says "if any input is older than that, the monitor is `unknown`". Taken literally, the contract's own `alive` monitor (`age(Alive) < 30ms and delta(Alive.counter, 16) == 1`) would say `dev` at 30 ms after the last message and `unknown` a moment later, so a DUT that stopped talking would read as unknown. Instead, a stale input's values go unknown (`expr.Program.Forget`) and the expression answers by Kleene's logic. `Vx > 1V` with a stale `Vx` is still `unknown`; `age(Alive) < 30ms and …` stays `dev`. **Accepted by the user, 2026-11-19.**
+- **Held inputs never go stale.** A held field's value stands until its next record (the outline's §4), so there is no period to miss. "3 × its observed period" applies to sampled inputs, as 3 × the median of their last 8 intervals. A sampled input seen once has no period yet, so its value is not used until the second sample. `max_age` overrides the period rule; it is refused on a held input.
+- **Inputs may be objects:** `"Alive": {"channel": "DutStatus", "max_age": "50ms", "enum": "class"}`. A plain string still works. This extends the §4.2 file format.
+- **A stream named whole is an event.** `"Alive": "DutStatus"` names a decoded message. `age(Alive)` and `rate(Alive, w)` read its arrivals; `Alive.counter` reads a field; `Alive` alone, as a value, is refused (`expr.Event`).
+- **The resource is hashed too.** The contract names action keywords; what they do is in the resource file. `Contract.ResourceHash` is recorded beside the contract hash, so that a changed resource is not hidden behind an unchanged contract hash. M6's hash check should compare both.
+- **Instants.** A sample at the same nanosecond as a deadline is applied first, so there are no zero-length deviations. A deviation has to outlast its debounce with no sample at its end saying otherwise. A transition at a deadline carries the deadline's time.
+- **Monitors reading monitors** see `true` while `ok`, `false` while `dev`, and unknown otherwise, `inactive` and `settling` included. Monitors are evaluated in dependency order, so a dependent changes in the same instant. Only monitors that list a mode settle when it is entered.
+- **`monitor-check -expect dev@…`** also fails on a deviation the list does not name, so that the list is the whole account of the deviations. Times are seconds from the recording's first record. The mode comes from a text channel, `mode.applied` by default, which M5 will write; a contract with modes over a recording without one is replayed with no mode, and says so.
+
+For M5, two things this milestone found:
+
+- **Order.** The evaluator takes records in time order across streams and refuses an earlier one. Offline, `monitor-check` sorts. Online, records from different clocks (kernel stamps on the bus, userspace for instruments) can reach the recorder slightly out of order, so M5 needs a short reorder window in front of the evaluator, and the watermark stands at the window's trailing edge.
+- **DBC streams are declared lazily.** The recorder declares a decoded message's stream the first time the message is seen, so a contract loaded at start cannot resolve `EngineData.EngineSpeed` from the recorder's streams. M5 resolves those against the database's schemas at start.
 
 ### M4: `cmd/dutsim`, a simulated DUT
 

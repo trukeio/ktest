@@ -24,6 +24,7 @@ var names = Names{
 	"mode":          {Kind: String},
 	"ok":            {Kind: Bool},
 	"$level":        NumberIn("V"),
+	"Status":        {Kind: Event},
 	"$n":            NumberIn(""),
 }
 
@@ -194,6 +195,10 @@ func TestRefusals(t *testing.T) {
 		{"mean(mode, 1s) > 5V", Monitor, "mean() takes numbers, and this is a string"},
 		{"delta(Alive.counter, Vx) == 1", Monitor, "delta()'s modulus is a constant"},
 		{"delta(Alive.counter, 0) == 1", Monitor, "delta()'s modulus must be more than zero"},
+		{"Status", Monitor, "this is a stream, which has no value: name one of its fields, or use age() or rate()"},
+		{"Status == 1", Monitor, "compares a stream"},
+		{"stable(Status, 1s)", Monitor, "stable() reads values, and Status is a stream"},
+		{"delta(Status) == 1", Monitor, "delta() takes numbers, and this is a stream"},
 		// The condition profile: comparisons and logic, nothing computed.
 		{"$level + 1V > 12V", Condition, "+: a procedure condition compares and combines, and does no arithmetic"},
 		{"$level * 2 > 12V", Condition, "does no arithmetic"},
@@ -254,6 +259,19 @@ func TestAgeDeadline(t *testing.T) {
 		if got := p.Eval(at); got.Bool == c.before {
 			t.Errorf("%s at deadline = %v", c.src, got.Bool)
 		}
+	}
+}
+
+// TestEvent: a stream named whole has an age and a rate, and nothing else.
+func TestEvent(t *testing.T) {
+	p := compile(t, "age(Status) < 30ms and rate(Status, 100ms) >= 2", Monitor)
+	observe(t, p, "Status", 0, Value{Known: true})
+	observe(t, p, "Status", 10*ms, Value{Known: true})
+	if got := p.Eval(20 * ms); !got.Known || !got.Bool {
+		t.Errorf("at 20ms: %+v", got)
+	}
+	if got := p.Eval(40 * ms); got.Bool {
+		t.Errorf("at 40ms: %+v", got)
 	}
 }
 

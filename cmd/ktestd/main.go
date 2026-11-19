@@ -231,6 +231,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/rveen/ktest/can"
+	"github.com/rveen/ktest/channel"
 	"github.com/rveen/ktest/procedure/lib"
 	"github.com/rveen/ktest/psu"
 	"github.com/rveen/ktest/record"
@@ -481,8 +482,8 @@ func main() {
 	// The internal subscription: every stream and the latest record of each,
 	// for a procedure's conditions. The recording's writer feeds it; the
 	// rack's writer carries the same records and does not.
-	table := newChanTable()
-	cfg.OnStream, cfg.OnRecord = table.onStream, table.onRecord
+	table := channel.NewTable()
+	cfg.OnStream, cfg.OnRecord = table.Stream, table.Record
 	fw, err := record.New(io.MultiWriter(bw, hub), cfg)
 	if err != nil {
 		fatalf("%v", err)

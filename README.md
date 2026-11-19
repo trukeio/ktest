@@ -56,6 +56,7 @@ The full design is in [doc/test-software-outline.md](doc/test-software-outline.m
 | --- | --- |
 | `cmd/ktestd` | The rack daemon. Records a bus, drives supplies and scopes, and serves the browser UI over HTTPS. |
 | `cmd/canlogb` | A small CAN recorder: SocketCAN in, Logb out. It has no control plane, so it cannot actuate anything. |
+| `cmd/monitor-check` | Replays a recording through a DUT contract's monitors, offline, and prints every transition; `-expect` turns it into a check. |
 | `cmd/logbcheck` | Checks a recording against independent references, such as candump logs and simulator transcripts. It also checks every control decision against the declared limits. |
 | `cmd/psusim` | A simulated two-channel bench supply (Keysight SCPI dialect) with a resistive load on each channel. |
 | `cmd/scopesim` | A simulated oscilloscope (Siglent SDS1000X-E SCPI dialect). |

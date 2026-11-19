@@ -1,0 +1,10 @@
+{
+  "contract": "supply-bench-demo",
+  "schema": 1,
+  "inputs": {"Vx": "psu1.ch1.meas.v", "Out": "psu1.ch1.out.applied", "Set": "psu1.ch1.v.set"},
+  "monitors": {
+    "below7": {"ok": "Vx < 7V", "debounce": "50ms"},
+    "tracks": {"ok": "not Out or abs(Vx - Set) <= 0.2V", "debounce": "200ms"},
+    "fresh":  {"ok": "age(Vx) < 250ms"}
+  }
+}

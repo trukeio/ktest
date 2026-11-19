@@ -66,6 +66,10 @@ const (
 	Bool
 	String
 	Enum
+	// Event is a stream named as a whole: it has samples, and no value. It
+	// is read only by the functions that need nothing but when samples
+	// arrived, age() and rate(); a field of it is a value like any other.
+	Event
 )
 
 func (k Kind) String() string {
@@ -78,6 +82,8 @@ func (k Kind) String() string {
 		return "a string"
 	case Enum:
 		return "an enumeration"
+	case Event:
+		return "a stream, which has no value: name one of its fields, or use age() or rate()"
 	}
 	return "nothing"
 }

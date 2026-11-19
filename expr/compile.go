@@ -74,6 +74,12 @@ func (p *Program) Slot(name string) (int, bool) {
 	return i, ok
 }
 
+// Forget makes input i's value unknown without a sample: the input has gone
+// stale, and its last value no longer stands. Its sample times are kept, so
+// age() goes on counting from the last real sample; the next sample's delta
+// is unknown, since what happened in between was not seen.
+func (p *Program) Forget(i int) { p.slots[i].cur = Unknown }
+
 // LastSample is when input i's latest sample was taken, 0 before any.
 func (p *Program) LastSample(i int) int64 { return p.slots[i].lastT }
 
@@ -576,7 +582,7 @@ func (c *compiler) ref(t token, name string) (cnode, error) {
 		if err != nil {
 			return cnode{}, errAt(t.col, "%v", err)
 		}
-		if typ.Kind == Enum && typ.Enum == nil || typ.Kind < Number || typ.Kind > Enum {
+		if typ.Kind == Enum && typ.Enum == nil || typ.Kind < Number || typ.Kind > Event {
 			return cnode{}, errAt(t.col, "%s has no type the language knows", name)
 		}
 		if typ.Kind == Number && typ.Unit.Scale == 0 {
@@ -725,6 +731,9 @@ func (c *compiler) call(name token) (cnode, error) {
 		w, err := window2(name, args[1])
 		if err != nil {
 			return out, err
+		}
+		if name.text != "rate" && s.typ.Kind == Event {
+			return out, errAt(args[0].col, "%s() reads values, and %s is %s", name.text, s.name, s.typ)
 		}
 		switch name.text {
 		case "stable":
