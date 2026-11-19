@@ -529,7 +529,7 @@ finally:
     s.delete(f"{RACK}/psu/psu1/lease")</code></pre>
 <p>Over HTTPS the lease holder is the token's name and cannot be chosen, so the recording's word for who held the supply is one nobody could have typed in for someone else.</p>
 <h3>Scripts inside the daemon <span class="st planned">planned</span></h3>
-<p>A script run by a client stops when the client does. For sequences that must survive a disconnect, such as an overnight thermal run, the daemon will run Lua scripts itself, one per run, each under a lease like any other client. Limit conditions will become expressions (<code>v_out &gt; 4.75 &amp;&amp; v_out &lt; 5.25</code>) instead of fixed numbers. Neither will sit in the timing path: a script that stalls must not be able to stall the bus.</p>
+<p>A script run by a client stops when the client does. For sequences that must survive a disconnect, such as an overnight thermal run, the daemon will run procedures itself, written in a strict subset of Robot syntax, one per run, each under a lease like any other client. Limit conditions will become expressions (<code>v_out &gt; 4.75 and v_out &lt; 5.25</code>) instead of fixed numbers, in the same expression language the procedures' conditions use, which is built (package <code>expr</code>). Neither will sit in the timing path: a script that stalls must not be able to stall the bus.</p>
 
 <h2 id="agents">1.6 With an LLM agent</h2>
 <p><span class="st proposed">proposed</span> Nothing in this section is built, and the names in it are placeholders. It describes how an agent is meant to fit, so that the design can be discussed before it is written.</p>
@@ -958,7 +958,7 @@ $ ktestd -https :8443 -tokens tokens -panel rack.json -psu psu1=192.168.1.20:502
 <tr><td>3</td><td><strong>Panels.</strong> The rack, the widget set, the panel editor, the supply driver</td><td><span class="st built">built</span>, except the trace table</td></tr>
 <tr><td>4</td><td><strong>Scope and waveforms.</strong> The scope driver, envelopes, the scope widget</td><td><span class="st built">built</span> against the simulator</td></tr>
 <tr><td></td><td>The real SDS1202X-E; hardware timestamps; the scope's trigger on the recording's timeline</td><td><span class="st planned">in progress</span></td></tr>
-<tr><td>5</td><td><strong>Scripting.</strong> Lua in the daemon, then limit expressions</td><td><span class="st planned">planned</span></td></tr>
+<tr><td>5</td><td><strong>Scripting.</strong> Expressions (built), then procedures in a Robot subset</td><td><span class="st planned">planned</span></td></tr>
 <tr><td></td><td>Replay in the rack; packaging as a service; more instrument kinds and dialects by configuration; USBTMC</td><td><span class="st planned">planned</span></td></tr>
 <tr><td></td><td>Several buses; LIN; ISO-TP; J1939</td><td><span class="st planned">planned</span></td></tr>
 <tr><td></td><td>The agent tool server</td><td><span class="st proposed">proposed</span></td></tr>

@@ -596,16 +596,18 @@ Once separated, the language choice stops being load-bearing.
 
 ### 9.2 Recommendation
 
+**Revised (2026-11-19), with `doc/two-racks-handoff.md`.** The first version of
+this table had Lua for orchestration and `expr-lang/expr` for limits. Both are
+replaced:
+
 | Layer | Tool | Why |
 |---|---|---|
-| Limits and conditions | `expr-lang/expr` | Typed, sandboxed, pure Go, no control flow to abuse. `v_out > 4.75 && v_out < 5.25`. |
-| Orchestration | Lua via `gopher-lua` | Pure Go, no cgo, single binary preserved. One `LState` per run maps onto a goroutine and bounds cleanly with `context`. Learnable in an afternoon. |
+| Monitors, limits and conditions | Ktest's own `expr` package (**built**) | One grammar for all three, with units checked at load (`Vx > 1.0V`, a bare number takes its neighbour's unit), time functions over a channel's history (`age`, `delta`, `rate`, `mean`, `stable`) and three profiles. Logic is `and`, `or`, `not`: `v_out > 4.75 and v_out < 5.25`. `expr-lang` has no unit literals, no dimension checks and no stateful call sites; the reasons are in the handoff, M1. |
+| Orchestration | Procedures in a strict subset of Robot syntax, run by a Go executor in the daemon (*planned*) | A test engineer reads and writes it without learning a programming language. Loops are bounded (`WHILE` needs a `limit=`), there is no `Evaluate` and no Python, and algorithms are library keywords written in Go. A new need is a new keyword or a new parameter, never new syntax. |
 | Analysis-heavy work | External, over REST | numpy, scipy, pandas. Runs as the user's own process. |
 
-The build order is Lua first and `expr` after (§12, milestone 5): the limits
-`expr` would generalise are already enforced as a file of numbers the control
-plane reads at start, and orchestration is the half a bench cannot be driven
-without.
+There is no Lua. DUT actions on a second rack are keywords too; Lua monitors,
+for state machines and protocol handling, wait until one is needed.
 
 The third row is the important one. Because control is REST and results are a Logb
 stream, an engineer can drive the rack from a Python script, a notebook, or a shell
@@ -617,11 +619,16 @@ way to use the system.
 
 - **Starlark** — Python syntax and pure Go, but no `while` and no recursion in the
   default configuration. "Ramp until it fails" becomes `for _ in range(1000)` with a
-  break, which is a trap in an exploratory context.
+  break, which is a trap in an exploratory context. *Revised:* procedures are
+  validated rather than exploratory, and there a bounded loop is a requirement, not a
+  trap. "Ramp until it fails" is the `Threshold Search` keyword.
 - **Embedded CPython** — cgo bindings are fragile and destroy the single-binary
   property. If real Python is needed it belongs out of process, which the REST API
   already provides.
 - **A purpose-built DSL** — costs a year and produces something worse than Lua.
+  *Revised:* the Robot subset is not a new language. Its syntax is Robot's, files
+  parse under Robot's own parser, and the executor only has to walk sections,
+  keyword calls and five control structures.
 - **Yaegi** (interpreted Go) — attractive for reusing driver types, but asks
   engineers to learn Go, which was the original objection.
 
@@ -1475,7 +1482,10 @@ opinion rather than the same answer arrived at cheaply.
    when it has won the bus. And the source of DSD TECH's own changes is not
    published. On the same bus as the MCP2518FD, it shows what the crystal and
    the transmit event FIFO buy.
-5. **Scripting.** **Lua first, `expr` after.** §9.2 keeps both layers, and the
+5. **Scripting.** *Superseded (2026-11-19):* the plan is now Ktest's own
+   `expr` package (**built**), then procedures in a Robot subset; see §9.2 and
+   `doc/two-racks-handoff.md`. What follows is the reasoning as first written.
+   **Lua first, `expr` after.** §9.2 keeps both layers, and the
    build order is now the other way round from what this line first said,
    because the two are not equally urgent. Orchestration is the thing a bench
    cannot be driven without — sweep a parameter, step the supply, wait for a
