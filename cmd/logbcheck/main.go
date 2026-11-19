@@ -405,6 +405,9 @@ const (
 	rqStop         = 12
 	rqMode         = 13
 	rqAction       = 14
+	// rqRule is a daemon rule removing the stress: a disarm with the outputs
+	// off, as the stop's, for the instruments the rule names.
+	rqRule = 15
 
 	vAccepted   = 0
 	vNotArmed   = 1
@@ -439,6 +442,7 @@ var requestNames = map[uint64]string{
 	rqDisarm: "disarm", rqLeaseTake: "lease take", rqLeaseRenew: "lease renewal",
 	rqLeaseRelease: "lease release", rqLeaseExpired: "lease expiry", rqShutdown: "shutdown",
 	rqChannelSet: "channel write", rqStop: "stop", rqMode: "mode change", rqAction: "action",
+	rqRule: "rule",
 }
 
 // readLogb reads the bus stream, the transmit streams and the cyclic task
@@ -1360,7 +1364,7 @@ func compareControl(r *recording, verbose bool) (int, time.Duration, error) {
 					if c.armed && inst != dutInst {
 						report("seq %d: %s is still armed after a %s", c.seq, what, name)
 					}
-				case rqDisarm, rqShutdown, rqStop:
+				case rqDisarm, rqShutdown, rqStop, rqRule:
 					if c.armed {
 						report("seq %d: %s is still armed after a %s", c.seq, what, name)
 					}
@@ -1457,7 +1461,7 @@ func compareControl(r *recording, verbose bool) (int, time.Duration, error) {
 			case c.request == rqLeaseRelease || c.request == rqLeaseExpired || c.request == rqShutdown:
 				leaseUntil = -1
 			}
-			if !bus && c.verdict == vAccepted && (c.request == rqDisarm || c.request == rqStop) {
+			if !bus && c.verdict == vAccepted && (c.request == rqDisarm || c.request == rqStop || c.request == rqRule) {
 				checkOff(r, inst, c, report)
 			}
 			prevArmed, prevHolder = c.armed, c.holder

@@ -1,0 +1,15 @@
+{
+  "contract": "dutsim-demo",
+  "schema": 1,
+  "inputs":   {"Vx": "DutSupply.Voltage", "Speed": "EngineData.EngineSpeed", "Alive": "DutStatus"},
+  "monitors": {
+    "alive": {"ok": "age(Alive) < 30ms and delta(Alive.counter, 16) == 1"},
+    "speed": {"ok": "abs(Speed - 3000) <= 30", "modes": ["active"]},
+    "supply": {"ok": "Vx > 9V"},
+    "abort": {"ok": "Vx < 16V"}
+  },
+  "modes":    {"active": {"action": "enter_active", "settle": "200ms"}},
+  "resource": "actions.robot",
+  "actions":  {"enter_active": "Enter Active", "leave_active": "Leave Active", "reset": "Reset DUT"},
+  "timeouts": {"reset": "2s"}
+}

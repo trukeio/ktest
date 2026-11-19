@@ -233,6 +233,7 @@ import (
 	"github.com/rveen/ktest/can"
 	"github.com/rveen/ktest/channel"
 	"github.com/rveen/ktest/monitor"
+	"github.com/rveen/ktest/peer"
 	"github.com/rveen/ktest/procedure/lib"
 	"github.com/rveen/ktest/psu"
 	"github.com/rveen/ktest/record"
@@ -273,7 +274,9 @@ func main() {
 		scopeTrdl = flag.Bool("scope-trigger-delay", false, "take TRDL into a scope's time axis, as third-party readers do "+
 			"and the programming guides do not")
 		contractPath = flag.String("contract", "", "a DUT contract, dut-interface.json: run its monitors live, as a DUT rack")
-		monWindow    = flag.Duration("mon-window", 2*time.Millisecond, "-contract: how long a record is held for "+
+		peerFlag     = flag.String("peer", "", "a DUT rack to drive, as a master: "+
+			"name=https://host:port,token=file,cacert=file,contract=dut-interface.json")
+		monWindow = flag.Duration("mon-window", 2*time.Millisecond, "-contract: how long a record is held for "+
 			"earlier ones from other clocks to arrive; one later than this is a gap")
 		monTick   = flag.Duration("mon-tick", time.Millisecond, "-contract: how often the loop gives the monitors its clock")
 		watermark = flag.Duration("watermark", 10*time.Millisecond, "-contract: how often mon.watermark is recorded")
@@ -405,6 +408,44 @@ func main() {
 			fatalf("%v", err)
 		}
 		cfg.DB = db
+	}
+
+	// A peer is checked before anything is written too: it must answer, with
+	// this rack's contract, and the rules about it must make sense.
+	var pl *peerLink
+	{
+		insts := map[string]bool{iface: true}
+		for _, s := range supplies {
+			insts[s.name] = true
+		}
+		for _, s := range scopes {
+			insts[s.name] = true
+		}
+		var id *monitor.Identity
+		var pcfg peer.Config
+		if *peerFlag != "" {
+			if pcfg, err = peer.ParseConfig(*peerFlag); err != nil {
+				fatalf("-peer: %v", err)
+			}
+			if id, err = monitor.Identify(pcfg.Contract); err != nil {
+				fatalf("-peer: %v", err)
+			}
+		}
+		if err := checkRules(lim.Rules, *peerFlag != "", insts, id); err != nil {
+			fatalf("limits: %v", err)
+		}
+		if *peerFlag != "" {
+			if pl, err = newPeerLink(pcfg, lim.Rules, cfg.Meta); err != nil {
+				fatalf("-peer: %v", err)
+			}
+			r := lim.Rules
+			cfg.Meta["rules.monitoring_lost.watermark_age"] = time.Duration(r.MonitoringLost.WatermarkAge).String()
+			cfg.Meta["rules.dut_abort.monitor"] = "none"
+			if r.DutAbort != nil {
+				cfg.Meta["rules.dut_abort.monitor"] = r.DutAbort.Monitor
+			}
+			cfg.Meta["rules.remove_stress"] = strings.Join(r.RemoveStress, " ")
+		}
 	}
 
 	// A contract is checked before anything is written, against the streams
@@ -615,6 +656,7 @@ func main() {
 	if dm != nil {
 		d.procs.contract = dm.c.Hash
 		d.contract = dm.c
+		d.provenance = cfg.Meta
 		di.bind(d, table)
 	}
 	ctl := &http.Server{Handler: local(d.mux(hub, rackHub)), ErrorLog: srvLog}
@@ -787,6 +829,25 @@ func main() {
 		fmt.Fprintf(os.Stderr, "ktestd: contract %s (sha256 %.12s…), %d monitors live, window %v, watermark every %v\n",
 			dm.c.Name, dm.c.Hash, len(dm.c.Order), *monWindow, *watermark)
 	}
+	var peerEvents <-chan peerEvent
+	if pl != nil {
+		if err := pl.declare(w, time.Now()); err != nil {
+			fatalf("%v", err)
+		}
+		l.peer = pl
+		peerEvents = pl.events
+		d.procs.contract = pl.id.Hash
+		pctx, pstop := context.WithCancel(context.Background())
+		defer pstop()
+		go pl.run(pctx)
+		also := ""
+		if a := lim.Rules.DutAbort; a != nil {
+			also = fmt.Sprintf(", or monitor %s is dev", a.Monitor)
+		}
+		fmt.Fprintf(os.Stderr, "ktestd: peer %s, contract %s; stress removed from %s when its watermark is older than %v%s\n",
+			pl.c.Name(), pl.id.Name, strings.Join(lim.Rules.RemoveStress, ", "),
+			time.Duration(lim.Rules.MonitoringLost.WatermarkAge), also)
+	}
 	// Every instrument's control stream is declared now, with its kind, so a
 	// rack that has only just connected knows a scope from a supply before
 	// anyone has taken either one's lease.
@@ -795,6 +856,7 @@ func main() {
 			fatalf("%v", err)
 		}
 	}
+	l.peerEvents = peerEvents
 	unconfirmed := l.run(rx, echo, done, fail)
 	close(stop)
 	wg.Wait()
@@ -868,6 +930,9 @@ type limits struct {
 	// Channels bounds each supply channel's setpoints, by channel —
 	// "psu1.ch1": {"v_max": 12, "i_max": 1}.
 	Channels map[string]chanLimit `json:"channels"`
+
+	// Rules are what the daemon does about a DUT rack, with -peer: see peer.go.
+	Rules *rules `json:"rules"`
 }
 
 // checkChannelLimits refuses a limit for a channel no -psu declares: a limit
@@ -1012,9 +1077,10 @@ type daemon struct {
 	subHub *stream.Hub // /stream/sub
 
 	// The DUT rack's, with -contract.
-	contract *monitor.Contract
-	dutHard  context.Context // cancelled as the daemon stops, ending the action under way
-	dutCur   dutState        // the action under way, for its keywords
+	contract   *monitor.Contract
+	provenance map[string]string // the recording's metadata as it started, for GET /dut/contract
+	dutHard    context.Context   // cancelled as the daemon stops, ending the action under way
+	dutCur     dutState          // the action under way, for its keywords
 }
 
 type reqKind int
@@ -1034,6 +1100,7 @@ const (
 	reqJob       // a decision taken by job on the loop, under its own number: a procedure start or stop
 	reqDutMode   // a DUT mode change: name is the mode
 	reqDutAction // a DUT action: name is the action
+	reqRule      // a daemon rule, taken on the loop: name is the rule; never a client's request
 )
 
 // controlOf is how each kind of request is named in <bus>.control.
@@ -1050,6 +1117,7 @@ var controlOf = map[reqKind]record.ControlRequest{
 	reqStop:         record.ControlStop,
 	reqDutMode:      record.ControlMode,
 	reqDutAction:    record.ControlAction,
+	reqRule:         record.ControlRule,
 }
 
 type request struct {
@@ -1204,7 +1272,9 @@ type loop struct {
 	queue []pending // sent and not yet handed back, oldest first
 	tasks map[uint32]*task
 
-	mon *dutMon // -contract: the live monitors; nil without
+	mon        *dutMon   // -contract: the live monitors; nil without
+	peer       *peerLink // -peer: the DUT rack; nil without
+	peerEvents <-chan peerEvent
 }
 
 // run is the loop. It returns how many sent frames were never handed back.
@@ -1216,6 +1286,14 @@ func (l *loop) run(rx, echo <-chan can.Frame, done <-chan struct{}, fail <-chan 
 	// The monitors' clock is the loop's: a tick goes to them through the same
 	// queue as the records, so a loop that stalls stops the watermark rather
 	// than letting it run on past records still waiting to be written.
+	// The rules about a peer are evaluated on its every record and on this
+	// tick, which is what notices a watermark that has stopped arriving.
+	var ruleTick <-chan time.Time
+	if l.peer != nil {
+		rt := time.NewTicker(10 * time.Millisecond)
+		defer rt.Stop()
+		ruleTick = rt.C
+	}
 	var monTick <-chan time.Time
 	var monOut <-chan monitor.Output
 	if l.mon != nil {
@@ -1273,6 +1351,12 @@ func (l *loop) run(rx, echo <-chan can.Frame, done <-chan struct{}, fail <-chan 
 
 		case o := <-monOut:
 			l.mon.write(l.w, o)
+
+		case e := <-l.peerEvents:
+			l.peerEvent(e)
+
+		case <-ruleTick:
+			l.evalRules(time.Now())
 
 		case <-tick.C:
 			l.expire(time.Now())
@@ -1630,7 +1714,7 @@ func (l *loop) record(in *inst, t time.Time, seq uint32, req record.ControlReque
 		case reqChannelSet:
 			c.Channel = channelName{in.name, r.part, r.what}.String()
 			c.Value = r.value
-		case reqDutMode, reqDutAction:
+		case reqDutMode, reqDutAction, reqRule:
 			c.Channel = r.name
 		}
 	}
@@ -1927,6 +2011,8 @@ func (d *daemon) mux(hub, rackHub *stream.Hub) *http.ServeMux {
 	m.HandleFunc("POST /dut/arm", d.plain(reqArm))
 	m.HandleFunc("POST /dut/disarm", d.plain(reqDisarm))
 	m.HandleFunc("PUT /dut/mode", d.dutMode)
+	m.HandleFunc("GET /dut/contract", d.dutContract)
+	m.HandleFunc("GET /clock", clock)
 	m.HandleFunc("POST /dut/actions/{action}", d.dutAction)
 	m.HandleFunc("PUT /channels/{channel}", d.channelPut)
 	m.HandleFunc("POST /procedures/run", d.procs.start)
@@ -1964,6 +2050,8 @@ func (d *daemon) mux(hub, rackHub *stream.Hub) *http.ServeMux {
 			"  DELETE /procedures/run           stop it; its [Teardown] runs; no lease needed\n"+
 			"  GET    /panel                    the rack's panel, its sha256 as the ETag\n"+
 			"  PUT    /panel                    save a panel, with If-Match: the ETag of the one it was edited from\n"+
+			"  GET    /dut/contract             the DUT rack's contract, its hashes and the rack's provenance\n"+
+			"  GET    /clock                    the daemon's clock, Unix ns, for a peer's offset estimate\n"+
 			"  GET    /stream/live              the recording, live, as Logb\n"+
 			"  GET    /stream/sub?ch=mon.*,...  the named streams, record by record; mon.watermark, mon.gap\n"+
 			"                                   and mode.* always\n"+
@@ -1987,6 +2075,7 @@ func rack(ui, api http.Handler) http.Handler {
 	m.Handle("/procedures/", api)
 	m.Handle("/disarm", api)
 	m.Handle("/dut/", api)
+	m.Handle("/clock", api)
 	m.Handle("/stream/", api)
 	m.Handle("/panel", api)
 	m.Handle("/", ui)

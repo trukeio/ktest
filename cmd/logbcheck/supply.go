@@ -229,8 +229,8 @@ func checkSupplyWrites(r *recording, report func(string, ...any)) {
 						requested[p.seq] = true
 					}
 				case psOff:
-					if !ok || (c.request != rqDisarm && c.request != rqStop) {
-						report("%s: the output switched off under seq %d at %.3fs, which is no disarm or stop of %s",
+					if !ok || (c.request != rqDisarm && c.request != rqStop && c.request != rqRule) {
+						report("%s: the output switched off under seq %d at %.3fs, which is no disarm, stop or rule of %s",
 							name, p.seq, p.t, inst)
 					}
 				}

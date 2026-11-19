@@ -57,6 +57,7 @@ The full design is in [doc/test-software-outline.md](doc/test-software-outline.m
 | `cmd/ktestd` | The rack daemon. Records a bus, drives supplies and scopes, and serves the browser UI over HTTPS. |
 | `cmd/canlogb` | A small CAN recorder: SocketCAN in, Logb out. It has no control plane, so it cannot actuate anything. |
 | `cmd/monitor-check` | Replays a recording through a DUT contract's monitors, offline, and prints every transition; `-expect` turns it into a check, and `-live` holds a DUT rack's own live transitions to the replay. |
+| `peer` | The lab rack's driver for a DUT rack: its contract, its lease, its monitors' stream and its clock. |
 | `cmd/sublat` | Measures how late a DUT rack's monitor transitions reach a `/stream/sub` subscriber. |
 | `cmd/logbcheck` | Checks a recording against independent references, such as candump logs and simulator transcripts. It also checks every control decision against the declared limits. |
 | `cmd/psusim` | A simulated two-channel bench supply (Keysight SCPI dialect) with a resistive load on each channel. |
@@ -103,6 +104,9 @@ hardware is needed:
   bench supply at `https://localhost:8443/`.
 - [examples/scope-bench](examples/scope-bench/README.md) drives a simulated
   oscilloscope at `https://localhost:8444/`.
+- [examples/two-racks](examples/two-racks/README.md) runs a lab rack and a DUT
+  rack against a simulated DUT: the DUT rack's monitors live, and the lab rack
+  removing the stress when it loses them or the DUT asks.
 
 ```sh
 examples/supply-bench/demo.sh

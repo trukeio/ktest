@@ -119,7 +119,8 @@ type Sim struct {
 	tr  io.Writer
 
 	state   State
-	low     bool // the supply's side of the hysteresis; true until it first reaches VRestore
+	v       float64 // the supply as last read
+	low     bool    // the supply's side of the hysteresis; true until it first reaches VRestore
 	bootEnd time.Time
 	counter uint8
 }
@@ -153,9 +154,14 @@ func New(cfg Config, t time.Time, tr io.Writer) (*Sim, error) {
 // State is what the DUT is doing now.
 func (s *Sim) State() State { return s.state }
 
+// Voltage is the supply as the DUT last read it, which it reports in
+// DutSupply while it talks.
+func (s *Sim) Voltage() float64 { return s.v }
+
 // Supply is a reading of the DUT's supply voltage, taken at t.
 func (s *Sim) Supply(t time.Time, v float64) {
 	s.settle(t)
+	s.v = v
 	switch {
 	case !s.low && v < s.cfg.VMin:
 		s.low = true

@@ -4,8 +4,9 @@
 //
 //	dutsim [flags] interface
 //
-// While it runs it sends two frames every -period: DutStatus, an alive message
-// with a counter modulo 16, and EngineData, with an engine speed. It reads its
+// While it runs it sends three frames every -period: DutStatus, an alive
+// message with a counter modulo 16; EngineData, with an engine speed; and
+// DutSupply, the supply voltage as it last read it. It reads its
 // supply voltage by polling a psusim channel, the supply that is the lab
 // rack's stress source in the two-rack demo, and reacts to the voltage falling
 // below -vmin in the way -behaviour names:
@@ -171,6 +172,7 @@ func run(ctx context.Context, o options, say func(string)) error {
 	defer tick.Stop()
 	status := can.New(codec.Status.ID, nil)
 	engine := can.New(codec.Engine.ID, nil)
+	supply := can.New(codec.Supply.ID, nil)
 	for {
 		select {
 		case <-ctx.Done():
@@ -198,6 +200,7 @@ func run(ctx context.Context, o options, say func(string)) error {
 			}{
 				{status, func() ([]byte, error) { return codec.Alive(counter) }},
 				{engine, func() ([]byte, error) { return codec.Speed(speed) }},
+				{supply, func() ([]byte, error) { return codec.SupplyVoltage(sim.Voltage()) }},
 			} {
 				p, err := f.enc()
 				if err != nil {

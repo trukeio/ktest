@@ -563,6 +563,52 @@ For M5 and M7, three things this milestone found:
   - killing the secondary removes the stress within `watermark_age` plus 20 ms, recorded with its cause;
   - `abort` going `dev` removes the stress.
 
+#### M6: what was built (2026-11-19)
+
+- **Package `peer`**, the lab rack's driver for a DUT rack. It has no policy of its own:
+  - `Info` asks which contract the DUT rack runs (the DUT rack's new `GET /dut/contract`).
+  - `Lease`, `Renew` and `Release` hold the `dut` lease.
+  - `Subscribe` decodes `/stream/sub` into records on the DUT rack's clock, using its `recording.epoch`.
+  - `Clock` samples the DUT rack's clock (its new `GET /clock`), and `Offsets` keeps the shortest of the last eight round trips.
+- **`ktestd -peer`.** At start, the contract and resource hashes are checked, and the lab rack refuses to start if the DUT rack does not answer or differs. Then:
+  - `<peer>.<stream>` mirrors each record, at its receive time, with `peer_t` and `restated`;
+  - `<peer>.link` records the link, `<peer>.clock` the offset, and `rules` each rule taking hold and clearing.
+- **The rules** are a `rules` section in `limits.json`, evaluated on every mirrored record and every 10 ms. A rule's decisions are recorded as request 15, a disarm with the outputs off.
+- **Other changes:**
+  - `monitor.Identify`: a contract's names and hashes, for a rack that does not evaluate it.
+  - `dutsim` sends `DutSupply.Voltage`, so that a DUT rack can watch the DUT's supply, which belongs to the lab rack.
+  - `examples/two-racks`.
+- **Tests:**
+  - `TestClockOffset`: the DUT rack's clock shifted by 0, 250 ms, −3 s and 37 h, with uneven delays of 0–4 ms on each side of the clock read. The estimate is within its stated uncertainty of the shift at every sample, and that uncertainty is under 5 ms after 12 samples.
+  - `TestSubscribe`: a real recorder and hub, with a late join, the state restated at the next segment, and each record's time to the nanosecond.
+  - `TestCheckRules` (eight refusals), `TestMirrorSchema`, `TestIdentify`, and `TestControlCheckRule` for `logbcheck`.
+- **Measured live** with `examples/two-racks` (a copy run in a scratch directory):
+
+  | Test | Result |
+  |---|---|
+  | contract mismatch refuses the start | a changed contract, and separately a changed resource, each refused with both hashes |
+  | mirrored records keep both timestamps | all 8 of the transitions the lab rack mirrored carry the DUT rack's own times, to the nanosecond, against the DUT rack's recording. The other 4 records are restated states, flagged |
+  | the DUT rack killed (`kill -9`) under a 13.5 V hold | `monitoring_lost` 2.85 ms after the kill, as the link broke; the supply's off applied 0.57 ms later; the run ended `link_lost` |
+  | the DUT rack frozen (`kill -STOP`) | the last watermark arrived 5 ms before the stop; the rule fired 100.7 ms after it, judging the watermark 108 ms old; the supply's off applied 102 ms after the stop, inside watermark_age + 20 ms; the rule cleared after `kill -CONT` |
+  | `abort` going `dev` | 17 V set; the DUT read it, the DUT rack's `abort` went `dev`, and `dut_abort` fired 35 ms after the set, with the supply's off applied 0.6 ms later |
+
+  `logbcheck -control -psu` passes on the lab rack's recording, the rules' decisions and the supply's switching off included.
+
+#### M6: choices for review
+
+- **A lost link is lost monitoring at once.** `monitoring_lost` holds while the subscription is down, as well as while the watermark is old. A killed rack is noticed in milliseconds rather than after `watermark_age`.
+- **A rule is level-triggered, with the first time special.** When it takes hold, every listed instrument is disarmed with its outputs off, armed or not, since an output can be on with nobody holding the lease. While it holds, any listed instrument that is armed is disarmed again: arming is accepted and then undone, under the rule's number. Nothing fires at start, before the first connection, unless something is armed, so a lab rack started before its DUT rack leaves its outputs as they are.
+- **`-peer` requires `rules.monitoring_lost`, and rules require `-peer`.** A lab rack that stressed a DUT nobody was watching would protect nothing, and rules about no peer would do nothing. `dut_abort` is optional, and its monitor must be in the contract.
+- **The lab rack checks the contract by its identity only** (`monitor.Identify`): names and hashes, as strictly decoded as `Load`. It cannot compile the monitors, since their channels are the DUT rack's. Both hashes, contract and resource, must match, and they are checked again on every reconnection.
+- **A mirrored record's time is when this rack received it,** and `peer_t` holds the DUT rack's own time. One clock per stream keeps the recording in order. `peer_t` minus the recorded offset puts a record on this rack's clock, which is what M7's windows will do.
+- **Mirrored names:** `dut.mon.watermark` rather than §4.6's `dut.watermark`, so that every mirror is the peer's name and the DUT rack's stream name. `dut.connected` is `dut.link.connected`.
+- **Held states at join arrive with the next segment.** logb restates held values when a segment begins, so a lab rack joining mid-segment learns each monitor's state within a second, or from its next record if that comes first. That restatement is mirrored once, flagged `restated`.
+- **The watermark's age** is by this rack's clock: the watermark's time less the estimated offset, or its receive time before there is an estimate. With the clocks in step, as on one machine, the two agree within the round trip.
+- **The lab rack holds the dut lease** from connection on, renewed every 10 s. A lease refused, because someone else holds it, is recorded on `dut.link`, and the subscription and the rules go on: protection does not depend on the lease.
+- **Link records are written on change.** Reconnection attempts every 500 ms that fail the same way are not recorded again.
+- **The two racks' clocks** are both read from this machine on one host. The `TestClockOffset` shift is applied to the clock the DUT rack reports; a DUT rack whose recorded times were shifted is not something ktestd can be made to do.
+- **Not done:** the procedure check in §4.6 ("refuse to start if the procedure names a mode, action or monitor that the contract lacks"). There are no DUT keywords yet; it comes with M7, using `Identity`'s names.
+
 ### M7: DUT keyword library (master)
 
 - **Scope:** the DUT part of §4.8, on the executor of M2: the five operations, `DUT *`, `Verify Baseline`, `Classify Recovery`, `Threshold Search`. The library is in `procedure/lib`.

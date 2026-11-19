@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -635,4 +636,28 @@ func (s *dutState) Store(r *dutRun) {
 	s.mu.Lock()
 	s.cur = r
 	s.mu.Unlock()
+}
+
+// dutContract is GET /dut/contract: which contract this DUT rack runs, and
+// the rack's provenance, for a master to compare with its own copy before it
+// relies on anything the rack says (handoff §4.6).
+func (d *daemon) dutContract(w http.ResponseWriter, r *http.Request) {
+	if !d.dutOn(w) {
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"contract":        d.contract.Name,
+		"sha256":          d.contract.Hash,
+		"resource_sha256": d.contract.ResourceHash,
+		"provenance":      d.provenance,
+	})
+}
+
+// clock is GET /clock: the daemon's clock, in Unix nanoseconds, read as late
+// as it can be, for a peer estimating the offset between the racks' clocks.
+func clock(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	fmt.Fprintf(w, "{\"t\":%d}\n", time.Now().UnixNano())
 }

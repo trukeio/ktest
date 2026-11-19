@@ -96,6 +96,30 @@ type procRun struct {
 	leases map[string]string // instrument -> lease token, for what the run has leased
 	armed  map[string]bool
 	mu     sync.Mutex
+
+	// cause is why a daemon rule ended the run, nil when none did.
+	cause *runCause
+}
+
+type runCause struct {
+	outcome procedure.Outcome
+	msg     string
+}
+
+// failRun ends the run under way with a daemon rule as its cause: its
+// [Teardown] runs, and its end says what failed it. Called on the loop.
+func (p *procs) failRun(o procedure.Outcome, msg string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.cur == nil {
+		return
+	}
+	p.cur.mu.Lock()
+	if p.cur.cause == nil {
+		p.cur.cause = &runCause{o, msg}
+	}
+	p.cur.mu.Unlock()
+	p.cur.stop()
 }
 
 func newProcs(d *daemon, dir string, table *channel.Table) *procs {
@@ -227,6 +251,11 @@ func (p *procs) execute(ctx context.Context, run *procRun, suite *procedure.Suit
 	go p.renew(run, renew)
 	res := suite.Run(ctx, p.hard, run.test, host)
 	close(renew)
+	run.mu.Lock()
+	if c := run.cause; c != nil {
+		res.Outcome, res.Msg = c.outcome, c.msg
+	}
+	run.mu.Unlock()
 	// The leases the run took are released when it ends, which disarms the
 	// instruments without switching anything off: the teardown has already
 	// done what the procedure says to do at the end.

@@ -1,0 +1,9 @@
+{
+  "min_period": "1ms",
+  "channels": {"psu1.ch1": {"v_max": 18, "i_max": 2}},
+  "rules": {
+    "monitoring_lost": {"watermark_age": "100ms", "action": "remove_stress"},
+    "dut_abort":       {"monitor": "abort", "action": "remove_stress"},
+    "remove_stress":   ["psu1"]
+  }
+}

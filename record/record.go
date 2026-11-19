@@ -728,6 +728,10 @@ const (
 	ControlStop         ControlRequest = 12 // every instrument disarmed at once: the rack's stop
 	ControlMode         ControlRequest = 13 // a DUT mode change; Channel names the mode
 	ControlAction       ControlRequest = 14 // a DUT action; Channel names it
+	// ControlRule is a daemon rule removing the stress (limits.json's rules):
+	// the instrument disarmed, its outputs off, as the stop does; Channel
+	// names the rule.
+	ControlRule ControlRequest = 15
 )
 
 // ControlVerdict is the control plane's answer, given before anything reaches
@@ -1348,7 +1352,8 @@ func controlSchema(instrument, kind string) *logb.Schema {
 				numField("can_id", ctlCanID, 32, "", "the identifier a send or cyclic request named; 0 for other requests"),
 				numField("request", ctlRequest, 8, "", "1 send, 2 cyclic set, 3 cyclic delete, 4 arm, 5 disarm, "+
 					"6 lease take, 7 lease renew, 8 lease release, 9 lease expired, 10 shutdown, 11 channel set, "+
-					"12 stop: every instrument disarmed at once, under one seq; 13 a DUT mode change, 14 a DUT action"),
+					"12 stop: every instrument disarmed at once, under one seq; 13 a DUT mode change, 14 a DUT action; "+
+					"15 a daemon rule removed the stress, the rule in channel"),
 				numField("verdict", ctlVerdict, 8, "", "0 accepted; refused: 1 not armed, 2 without the lease, "+
 					"3 the lease is held by another, 4 a cyclic period below the floor, 5 the caller's role does not permit it, "+
 					"6 a channel write above the channel's limit, 7 a DUT action is already under way"),

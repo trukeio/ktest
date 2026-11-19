@@ -195,7 +195,7 @@ func TestControlCheckSupply(t *testing.T) {
 		{"a stop that left an output on", func(r *recording) { r.psu["psu1.ch1"][5].t = 2.5 }, "not off within"},
 		{"an output switched off by a lease release", func(r *recording) {
 			r.psu["psu1.ch1"] = append(r.psu["psu1.ch1"], psuRec{t: 2.001, seq: 7, event: psOff, connected: true})
-		}, "no disarm or stop"},
+		}, "no disarm, stop or rule"},
 		{"a write the control plane never accepted", func(r *recording) { r.psu["psu1.ch1"][2].seq = 4 }, "accepted no write"},
 		{"an accepted write never requested", func(r *recording) { r.psu["psu1.ch1"][1].seq = 0 }, "never recorded as requested"},
 		{"a stop missing from the bus", func(r *recording) { r.control[0].seq = 9 }, "not for"},
@@ -400,6 +400,44 @@ func TestControlCheckDUT(t *testing.T) {
 		{"an action asked for by a view name", func(r *recording) {
 			r.controls[dutInst][2].by = "dash"
 		}, "whose role is view"},
+	} {
+		t.Run(tc.name, func(t *testing.T) { checkPlanted(t, good, tc.mutate, tc.name, tc.want) })
+	}
+}
+
+// TestControlCheckRule: a daemon rule removing the stress is a disarm with the
+// outputs off, under one number, by nobody: the supply must be off after it,
+// and disarmed.
+func TestControlCheckRule(t *testing.T) {
+	good := func() *recording {
+		return &recording{
+			meta: map[string]string{
+				"limits.cyclic.min_period": "1ms", "psu.psu1.channels": "1",
+				"limits.psu1.ch1.v_max": "12", "limits.psu1.ch1.i_max": "none", "limits.psu1.ch1.out_max": "none",
+			},
+			control: []ctlRec{{t: 0, request: rqShutdown}},
+			controls: map[string][]ctlRec{"psu1": {
+				{t: 0.0, seq: 1, request: rqLeaseTake, leased: true, ttl: 10},
+				{t: 0.1, seq: 2, request: rqArm, armed: true, leased: true, ttl: 10},
+				{t: 0.4, seq: 3, request: rqChannelSet, armed: true, leased: true, ttl: 10, channel: "psu1.ch1.out.set", value: 1},
+				{t: 1.0, seq: 4, request: rqRule, leased: true, ttl: 10, channel: "monitoring_lost"},
+			}},
+			psu: map[string][]psuRec{"psu1.ch1": {
+				{t: 0.0, event: psConnected, connected: true},
+				{t: 0.4, seq: 3, event: psRequested, connected: true},
+				{t: 0.401, seq: 3, event: psApplied, connected: true, outApplied: true},
+				{t: 1.002, seq: 4, event: psOff, connected: true},
+			}},
+		}
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(r *recording)
+		want   string
+	}{
+		{"a rule that switched the supply off", func(r *recording) {}, ""},
+		{"a rule that left the output on", func(r *recording) { r.psu["psu1.ch1"][3].t = 3 }, "not off within"},
+		{"a rule that left the supply armed", func(r *recording) { r.controls["psu1"][3].armed = true }, "still armed after a rule"},
 	} {
 		t.Run(tc.name, func(t *testing.T) { checkPlanted(t, good, tc.mutate, tc.name, tc.want) })
 	}
