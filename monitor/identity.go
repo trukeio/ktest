@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"time"
 )
 
 // Identity is what a rack that does not evaluate a contract needs of it: the
@@ -25,6 +26,9 @@ type Identity struct {
 	Monitors     []string
 	Modes        []string
 	Actions      []string
+	// Settle is each mode's settle time: how long after it is applied its
+	// monitors are settling, and a master waits before judging them.
+	Settle map[string]time.Duration
 }
 
 // Identify reads a contract's identity.
@@ -48,7 +52,14 @@ func Identify(path string) (*Identity, error) {
 	sum := sha256.Sum256(raw)
 	id := &Identity{Name: f.Contract, Path: path, Hash: hex.EncodeToString(sum[:]),
 		Monitors: slices.Sorted(maps.Keys(f.Monitors)), Modes: slices.Sorted(maps.Keys(f.Modes)),
-		Actions: slices.Sorted(maps.Keys(f.Actions))}
+		Actions: slices.Sorted(maps.Keys(f.Actions)), Settle: map[string]time.Duration{}}
+	for name, m := range f.Modes {
+		d, err := duration(m.Settle, true)
+		if err != nil {
+			return nil, fmt.Errorf("%s: mode %s: settle: %v", path, name, err)
+		}
+		id.Settle[name] = d
+	}
 	if f.Resource != "" {
 		rb, err := os.ReadFile(filepath.Join(filepath.Dir(path), f.Resource))
 		if err != nil {

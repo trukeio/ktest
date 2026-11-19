@@ -179,6 +179,33 @@ func (c *Client) Release(ctx context.Context, lease string) error {
 	return c.do(ctx, "DELETE", "/dut/lease", nil, lease, nil)
 }
 
+// Arm arms the DUT under the lease, so that its mode may be changed and its
+// actions run.
+func (c *Client) Arm(ctx context.Context, lease string) error {
+	return c.do(ctx, "POST", "/dut/arm", nil, lease, nil)
+}
+
+// SetMode asks for a mode, "" for none, and returns the request's number. The
+// DUT rack answers once it has accepted it; the mode is applied when its entry
+// action ends, which its mode stream says.
+func (c *Client) SetMode(ctx context.Context, lease, mode string) (uint32, error) {
+	var body struct {
+		Seq uint32 `json:"seq"`
+	}
+	err := c.do(ctx, "PUT", "/dut/mode", map[string]string{"value": mode}, lease, &body)
+	return body.Seq, err
+}
+
+// Invoke asks for an action and returns the request's number. Its outcome
+// arrives on dut.action.<name>, under that number.
+func (c *Client) Invoke(ctx context.Context, lease, action string) (uint32, error) {
+	var body struct {
+		Seq uint32 `json:"seq"`
+	}
+	err := c.do(ctx, "POST", "/dut/actions/"+url.PathEscape(action), nil, lease, &body)
+	return body.Seq, err
+}
+
 // RefusedError is a request the DUT rack answered with a refusal: its
 // sentence and, when the refusal was recorded, its number.
 type RefusedError struct {

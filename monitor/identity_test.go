@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The master's view of a contract: its names, and the hashes of the contract
@@ -31,6 +32,9 @@ func TestIdentify(t *testing.T) {
 	if strings.Join(id.Monitors, ",") != "abort,alive,ready,speed,vx" || strings.Join(id.Modes, ",") != "active" ||
 		strings.Join(id.Actions, ",") != "enter_active,recover" {
 		t.Errorf("%v %v %v", id.Monitors, id.Modes, id.Actions)
+	}
+	if id.Settle["active"] != 500*time.Millisecond {
+		t.Errorf("settle %v", id.Settle)
 	}
 	// The same strictness as Load: a misspelt key refuses it.
 	if err := os.WriteFile(cp, []byte(strings.Replace(example, `"modes"`, `"moods"`, 1)), 0o644); err != nil {

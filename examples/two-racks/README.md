@@ -45,6 +45,29 @@ Try them, with the lab rack's local socket:
 - **Overvoltage**: lease and arm `psu1` yourself, and set 17 V. The DUT
   reports it, `abort` goes `dev`, and the stress is off.
 
+## Classifying the DUT
+
+`lab/procedures/sweep.robot` puts the DUT through supply dips and classifies
+each by ISO 16750-1's functional status:
+
+    $L -d '{"file":"sweep.robot","test":"Sweep"}' http://ktest/procedures/run       # 12 V down to 3 V
+    $L -d '{"file":"sweep.robot","test":"Threshold"}' http://ktest/procedures/run   # the lowest dip it copes with
+
+The DUT copes with anything down to 9 V (dutsim's `-vmin`), so the dips to 12,
+10 and 9.5 V are class A. Below that, the class depends on what dutsim is told
+to do, which `BEHAVIOUR=` sets:
+
+| `BEHAVIOUR=` | the DUT, below 9 V | class |
+|---|---|---|
+| `glitch` | reports a wrong speed, and recovers | B |
+| `restore` | stops, and reboots when the supply returns | C |
+| `reset` (the default) | stops until the reset action | D |
+| `never` | stops for good | E, and the sweep ends there |
+
+    BEHAVIOUR=restore ./demo.sh
+
+`Threshold` finds 9 V. Each class is a step result in `procedure.result`.
+
 ## What the lab rack records of the DUT rack
 
 | stream | holds |
@@ -64,10 +87,12 @@ again.
 
 ## Checking a run
 
-    bin/logbcheck -control -psu psu1=lab/psusim.txt lab/lab.logb /dev/null
+    bin/logbcheck -control -judgements -psu psu1=lab/psusim.txt -dutsim dut/dutsim.txt lab/lab.logb /dev/null
 
 holds the lab rack's recording to its limits and rules and to psusim's own
-transcript, and
+transcript, replays every judgement of the DUT's monitors from the mirrored
+states, and holds every class and level to dutsim's own account of what the
+DUT did; and
 
     bin/monitor-check -live dut/dut-interface.json dut/dut.logb
 

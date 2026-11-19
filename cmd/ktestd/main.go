@@ -837,6 +837,17 @@ func main() {
 		l.peer = pl
 		peerEvents = pl.events
 		d.procs.contract = pl.id.Hash
+		// The master's DUT keywords, checked against the contract's names
+		// when a procedure loads.
+		lib.AddDUT(d.procs.lib, &rackAdapter{p: d.procs}, &dutPeer{v: pl.view, c: pl.c, id: pl.id, lease: &pl.lease,
+			judged: func(j judgement) {
+				t := time.Now()
+				d.dutJob(func(l *loop) {
+					if err := pl.writeJudgement(l.w, t, j); err != nil {
+						fatalf("write: %v", err)
+					}
+				})
+			}})
 		pctx, pstop := context.WithCancel(context.Background())
 		defer pstop()
 		go pl.run(pctx)

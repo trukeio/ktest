@@ -117,6 +117,8 @@ func main() {
 		ctl     = flag.Bool("control", false, "also check the control streams against the limits the recording declares")
 		psuT    = flag.String("psu", "", "also check a supply against the transcript of what it was told: name=transcript.log")
 		scopeT  = flag.String("scope", "", "also check a scope against the simulator's own account of the run: name=transcript.log")
+		dutT    = flag.String("dutsim", "", "also check the procedure's step results against dutsim's transcript of what the DUT did")
+		judge   = flag.Bool("judgements", false, "also replay every judgement of the DUT's monitors from the mirrored states")
 	)
 	flag.Usage = usage
 	flag.Parse()
@@ -205,6 +207,22 @@ func main() {
 			"under the settings in force, with the axis the dialect's rule gives and the samples recovering "+
 			"byte for byte to the sha256 it recorded; every setting applied is the transcript's, and what "+
 			"the recording says the scope holds is what the simulator holds\n", n, name, path)
+	}
+	if *judge {
+		n, err := compareJudged(flag.Arg(0), *verbose)
+		if err != nil {
+			fail(err)
+		}
+		fmt.Printf("logbcheck: %d judgements of the DUT's monitors replay from the mirrored states, "+
+			"each to what the keyword was told\n", n)
+	}
+	if *dutT != "" {
+		n, err := compareDutsim(flag.Arg(0), *dutT, *verbose)
+		if err != nil {
+			fail(err)
+		}
+		fmt.Printf("logbcheck: %d step results the procedure recorded are what %s says the DUT did: "+
+			"each class, and each level passed or not\n", n, *dutT)
 	}
 }
 

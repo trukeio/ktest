@@ -664,6 +664,23 @@ $ $K -X POST -H "Ktest-Lease: $T" http://ktest/dut/actions/reset             # r
 <tr><td><code>rules</code></td><td>each rule taking hold and clearing, with its cause</td></tr>
 </tbody>
 </table></div>
+<p><strong>DUT keywords.</strong> A lab rack's procedures may use the DUT through these, every mode, action and monitor they name checked against the contract when the procedure loads:</p>
+<div class="scroll"><table>
+<thead><tr><th>Keyword</th><th>Does</th></tr></thead>
+<tbody>
+<tr><td><code>DUT Set Mode    active</code></td><td>changes the mode, and returns once it is applied and settled</td></tr>
+<tr><td><code>DUT Invoke    reset</code></td><td>runs an action and returns once it has ended; fails as it did</td></tr>
+<tr><td><code>DUT Prepare    active    ready=alive</code></td><td>the mode, then a monitor ok</td></tr>
+<tr><td><code>DUT Wait For    dut.mon.alive.state == "ok"</code></td><td>waits for a condition over the mirrored channels</td></tr>
+<tr><td><code>${r}=    DUT Evaluate    alive,speed    window=2s</code></td><td><code>nok</code> if a monitor was <code>dev</code> or <code>unknown</code> in the window, <code>ok</code> if none was; the window runs forward from the call, or from <code>since=</code></td></tr>
+<tr><td><code>Verify Baseline    alive,speed    window=1s</code></td><td>fails unless every monitor stays ok</td></tr>
+<tr><td><code>${t}=    Mark Time</code></td><td>this rack's clock, for <code>since=</code></td></tr>
+<tr><td><code>${c}=    Classify Recovery    alive,speed    since=${t}    function=alive    action=reset</code></td><td>the ISO 16750-1 functional status class, A to E, of a stress applied since <code>${t}</code> and removed</td></tr>
+<tr><td><code>${th}=    Threshold Search    dip    alive    target=psu1.ch1    nominal=13.5V    start=12V    step=0.5V    floor=6V</code></td><td>the lowest supply dip the DUT comes through, each level a step result</td></tr>
+<tr><td><code>DUT Snapshot    alive,speed</code></td><td>the monitors' states, as text</td></tr>
+</tbody>
+</table></div>
+<p>A wait fails <code>timeout</code>, <code>refused</code> or <code>link_lost</code>; <code>nok</code> is a value. Every answer the monitors gave a keyword is recorded in <code>dut.judgement</code>, and <code>logbcheck -judgements</code> replays each from the mirrored states. With <code>dutsim</code>, <code>logbcheck -dutsim transcript</code> holds every step result to what the DUT did. <span class="st built">built</span></p>
 <p>The rules are in <code>limits.json</code> (<a href="#limits">§2.5</a>). Measured with <code>examples/two-racks</code>: a killed DUT rack had the stress removed 3.4 ms later, as the link broke; a frozen one, 102 ms later, by its watermark's age; an <code>abort</code> monitor going <code>dev</code>, 0.6 ms after the lab rack received it. <span class="st built">built</span></p>
 <h4><code>sublat</code>: how late the monitors reach a subscriber</h4>
 <pre class="code"><code>sublat [-cacert pem] [-token file] [-d 10s] https://rack:8443/stream/sub?ch=mon.*</code></pre>
@@ -1040,7 +1057,8 @@ $ ktestd -https :8443 -tokens tokens -panel rack.json -psu psu1=192.168.1.20:502
 <tr><td>5</td><td><strong>Scripting.</strong> The expression language; procedures in a Robot subset, run by the daemon</td><td><span class="st built">built</span> for a single rack</td></tr>
 <tr><td></td><td>Two racks: DUT monitors live, the subscription stream, DUT modes and actions</td><td><span class="st built">built</span></td></tr>
 <tr><td></td><td>Two racks: the peer driver and the daemon rules</td><td><span class="st built">built</span></td></tr>
-<tr><td></td><td>Two racks: DUT keywords for the master's procedures; locked mode</td><td><span class="st planned">planned</span></td></tr>
+<tr><td></td><td>Two racks: DUT keywords for the master's procedures</td><td><span class="st built">built</span></td></tr>
+<tr><td></td><td>Locked mode</td><td><span class="st planned">planned</span></td></tr>
 <tr><td></td><td>Replay in the rack; packaging as a service; more instrument kinds and dialects by configuration; USBTMC</td><td><span class="st planned">planned</span></td></tr>
 <tr><td></td><td>Several buses; LIN; ISO-TP; J1939</td><td><span class="st planned">planned</span></td></tr>
 <tr><td></td><td>The agent tool server</td><td><span class="st proposed">proposed</span></td></tr>

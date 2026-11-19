@@ -49,6 +49,7 @@ These resolve where this handoff contradicted the outline, the manual or the cod
 | C7 | The "R8" reference is dropped. |
 | C8 | Fixtures come from `examples/supply-bench`. |
 | C9 | DUT actions are Robot keywords in a resource file named by the contract, run on the secondary by the same executor. No `gopher-lua`. Lua monitors wait. |
+| C10 | **Recovery is classified by ISO 16750-1's functional status, A to E** (decided 2026-11-19), the newer standard, replacing the Roman classes I–V of the earlier drafts. A: every function as designed, during and after. B: every function works during, some beyond tolerance, all return by themselves. C: some function does not work during, all return by themselves. D: some function needs a simple reset to return. E: needs repair. The contract's enum is `"class": ["A", "B", "C", "D", "E"]`. `Classify Recovery`'s rules are in §4.8. |
 
 Adjustments taken with them:
 
@@ -136,7 +137,7 @@ func     = "abs" | "min" | "max" | "age" | "delta" | "rate" | "mean" | "stable"
   "modes":    {"active": {"action": "enter_active", "settle": "500ms"}},
   "resource": "actions.robot",
   "actions":  {"enter_active": "Enter Active", "recover": "Recover"},
-  "enums":    {"class": ["I", "II", "III", "IV", "V"]},
+  "enums":    {"class": ["A", "B", "C", "D", "E"]},
   "timeouts": {"ready": "10s", "recover": "5s"}
 }
 ```
@@ -256,16 +257,18 @@ A new `rules` section in `limits.json`, read at start and not changeable by any 
 | `Verify Baseline    monitors    window=` | fails unless every monitor is `ok` |
 | `Settle    duration` | wait a fixed time |
 | `Record Step    point    level    result    [threshold=]` | record a step result |
-| `Classify Recovery    monitors    action=    timeout=` | returns a class from the enum, using the rules below |
-| `Threshold Search    point    monitors    step=    floor=    [method=descending]` | find the threshold |
+| `Classify Recovery    monitors    function=    action=    timeout=` | returns a class from the enum, using the rules below |
+| `Threshold Search    point    monitors    target=    nominal=    start=    step=    floor=    duration=    recover=    action=    [method=descending]` | find the threshold (the full signature is M7's) |
+| `Mark Time` | the master's clock, for `since=` |
+| `DUT Snapshot    monitors` | the monitors' states as last mirrored, as text |
 | `Stress Apply`, `Stress Remove` | thin wrappers over the lab instruments named in the procedure's variables; start with the supply driver |
 
-`Classify Recovery` rules:
-- I: no deviation.
-- II: back to `ok` without the action, within the timeout, after the stress is removed.
-- III: back to `ok` after the action.
-- IV: not back.
-- V is set only by an operator.
+`Classify Recovery` rules (C10, ISO 16750-1). `monitors` are all the monitors judged; `function=` names those among them whose deviation means a function did not work, such as `alive`. The others' deviation means a function worked beyond its tolerance, such as `speed`.
+- A: no listed monitor deviated.
+- B: only monitors outside `function=` deviated, and all are back to `ok` without the action, within the timeout, after the stress is removed.
+- C: a `function=` monitor deviated, and all are back to `ok` without the action, within the timeout.
+- D: back to `ok` only after the action.
+- E: not back after the action. The software cannot see whether a repair is needed, so E says only that the DUT did not return; an operator confirms it.
 
 **Recording:**
 - every keyword call is a `procedure.step` record: id, file:line, keyword, arguments, outcome, t_start, t_end;
@@ -410,10 +413,10 @@ For M5, two things this milestone found:
   - On a CAN interface (vcan), it sends an alive message every 10 ms, with a counter, and a speed signal.
   - It reads its "supply voltage" by polling a `psusim` channel over SCPI. That supply is the lab rack's stress source in the demo.
 - **Configurable behaviour below a threshold voltage:**
-  - glitch only;
-  - stop until the voltage is restored (class II);
-  - stop until a reset frame is received (class III);
-  - never recover (class IV).
+  - glitch only (functional status B, C10);
+  - stop until the voltage is restored (C);
+  - stop until a reset frame is received (D);
+  - never recover (E).
 - **Other:** it keeps a transcript for checks.
 - **Why it comes now:** it makes the whole two-rack setup testable without hardware, on one machine.
 - **Done (2026-11-19).** Package `dut` is the DUT as a state machine with no clock and no bus (times come in with every event), and its frames' codec. `cmd/dutsim` connects it to a CAN socket and a psusim poller. The frames are in `dut/dutsim.dbc` (`DutStatus.counter`, `EngineData.EngineSpeed`, `DutReset.Request`), which is embedded in dutsim and given to `ktestd -dbc`. A second `monitor-check` fixture is a ktestd recording of dutsim through a 300 ms dip to 6 V (`cmd/monitor-check/testdata/dutsim-dip.*`), and its test holds `alive`'s transitions to dutsim's transcript.
@@ -421,7 +424,7 @@ For M5, two things this milestone found:
 
 #### M4: choices for review
 
-- **Behaviours are named, not numbered.** The plan calls the dip reactions "class II, III, IV", but ISO 7637-2's five functional status classes, which the contract's `"enums": {"class": ["I" … "V"]}` suggests, number them one higher: `glitch` is II (out of tolerance during the dip, recovers by itself), `restore` III (not working during it, recovers by itself), `reset` IV (needs a reset), `never` V. dutsim says `-behaviour restore` rather than a class. M7's expected results should use the ISO numbering. **Please confirm.**
+- **Behaviours are named, not numbered.** dutsim says `-behaviour restore` rather than a class. *Corrected after review:* this note first said that ISO 7637-2 numbers the reactions one higher than the plan did. That mixed two schemes. ISO 7637-2's function performance status has four statuses, I–IV, under which the plan's numbering was right. The five-way split is ISO 16750-1's A–E. **Decided (C10): ISO 16750-1.** `glitch` is B, `restore` C, `reset` D, `never` E.
 - **What the DUT does at the edges:**
   - The first boot is always clean, whatever the behaviour: a power-on is a reset.
   - A dip during a boot restarts the boot for every behaviour, `never` included, since the DUT was not yet running.
@@ -620,6 +623,48 @@ For M5 and M7, three things this milestone found:
   - every load-time check;
   - each outcome path of each operation, including `link_lost` during `Evaluate`;
   - replaying a recording reproduces the same verdicts.
+
+#### M7: what was built (2026-11-19)
+
+- **The master's DUT keywords**, `lib.AddDUT`, added to a daemon's library with `-peer`:
+  - the operations: `DUT Set Mode`, `DUT Invoke`, `DUT Wait For`, `DUT Evaluate`, `DUT Snapshot`;
+  - the keywords made of them: `DUT Prepare`, `Verify Baseline`, `Classify Recovery`, `Threshold Search`;
+  - `Mark Time`.
+- **Each name is checked at load against the contract's identity:** every mode, action and monitor a call names, including `ready=` and `function=`. This is the procedure check §4.6 asked for.
+- **In the daemon,** `peerView` keeps what the lab rack mirrors: each monitor's states on the DUT rack's clock, its watermark, the mode as applied, the actions' ends, the link and the offset. `dutPeer` implements the operations over it. The driver arms the DUT once it holds its lease.
+- **`<peer>.judgement` records every answer the monitors gave a keyword.** A `Deviations` answer gives its window on the DUT rack's clock; an `AllOK` answer gives the watermark it read at. Both carry the offset used.
+- **`logbcheck -judgements`** replays each judgement from the mirrored states. **`logbcheck -dutsim`** holds every step result to dutsim's transcript.
+- **The demo:**
+  - `examples/two-racks/lab/procedures/sweep.robot`: `Sweep` dips the DUT's supply to 12, 10, 9.5, 8, 6 and 3 V and classifies each; `Threshold` searches from 12 V in 0.5 V steps.
+  - `demo.sh` takes `BEHAVIOUR=` for dutsim.
+- **Tests:**
+  - `TestDUTLoadChecks`: nine refusals at load, each at its line.
+  - `TestClassifyRecovery`: every class from scripted monitors, including C for a function that stopped on the way back, and E for an action that ran and failed.
+  - `TestDUTOutcomes`: ok and nok as values; refused, timeout and fail; `link_lost` during `DUT Evaluate` and `DUT Wait For`; the teardown run each time.
+  - `TestThresholdSearch`, `TestDutsimCheck` (five planted faults) and `TestReplayJudgement`.
+- **Measured live**, each run checked with `logbcheck -control -judgements -psu -dutsim`:
+
+  | dutsim | Sweep 12 / 10 / 9.5 / 8 / 6 / 3 V | Checks |
+  |---|---|---|
+  | `glitch` | A A A B B B | 6 verdicts match the transcript |
+  | `restore` | A A A C C C | 6 match |
+  | `reset` | A A A D D D | 6 match; 19 judgements replay |
+  | `never` | A A A E, then the next baseline fails (the DUT is gone) | 4 match |
+  | `reset`, `Threshold` | ok to 9 V, nok at 8.5 V: threshold 9 V, dutsim's `-vmin` | 8 match |
+
+#### M7: choices for review
+
+- **Windows run forward from the call.** `DUT Evaluate    alive,speed    window=2s` watches the next two seconds, which reads in order in a procedure: apply the stress, then evaluate it. `since=${t}` (from `Mark Time`) evaluates back to a moment instead, and `Classify Recovery` takes it, since it is called after the stress is removed.
+- **A window is put on the DUT rack's clock with the offset, and widened by its uncertainty on both sides,** so that a deviation at an edge counts against the DUT. `DUT Evaluate` waits for the DUT rack's watermark to pass the window's end; 2 s past it, the link counts as lost (`link_lost`). That is well beyond `watermark_age`, so the rule fires first.
+- **nok means dev or unknown**, as §4.8 says. `inactive` and `settling` are not deviations.
+- **`Classify Recovery`** (C10) looks for deviations from `since` to the call. If there are none, the class is A. Otherwise it waits up to `timeout` for every monitor to be ok, and looks again up to that moment, so that a function stopping after the stress is removed still counts. Then:
+  - back by itself: B if only monitors outside `function=` deviated, C if one in it did;
+  - not back: `action=` is run, and D if that brings everything back, E if not;
+  - an action that runs and fails, its own wait timing out for example, still leads to E. Only a refusal or a lost link fails the keyword. The `never` run found this.
+- **`Threshold Search`** has the signature in §4.8's table, since the handoff left it open. It dips from `start` down by `step` to `floor`, each dip for `duration`, back to `nominal`, then waits `recover` for every monitor, running `action=` if they are not back. A level passes if no monitor deviated from the dip's start until all were ok again. Each level is a step result (`ok`, `nok`, or `lost` if the DUT did not come back), and so is the threshold. The levels are counted, not accumulated, so 0.1 V steps do not drift. Only `descending` exists.
+- **Verdicts replay through their judgements.** A class cannot be recomputed from a recording alone, because the moments its keyword waited until are not in it. Every answer the monitors gave is in `<peer>.judgement`, and the class follows from those answers by fixed rules. So `-judgements` recomputes every answer, and `-dutsim` holds every verdict to the DUT's own account.
+- **Conditions over `dut.*` channels need the channels mirrored before the procedure loads.** `DUT Wait For` is checked against the types of the channels mirrored so far, so a procedure started before the lab rack has connected is refused with "not a channel here". The keywords that name monitors check against the contract, not against the mirrored channels.
+- **`demo.sh` takes `BEHAVIOUR=`** for dutsim, so that every class can be shown.
 
 ### M8: locked mode
 

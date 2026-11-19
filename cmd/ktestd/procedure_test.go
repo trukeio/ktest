@@ -10,6 +10,7 @@ import (
 
 	"github.com/rveen/ktest/channel"
 	"github.com/rveen/ktest/expr"
+	"github.com/rveen/ktest/monitor"
 	"github.com/rveen/ktest/procedure"
 	"github.com/rveen/ktest/procedure/lib"
 )
@@ -227,5 +228,36 @@ func TestExampleProcedureLoads(t *testing.T) {
 		if err := a.Stressor(target); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%s: %v", target, err)
 		}
+	}
+}
+
+// TestTwoRacksProceduresLoad: the two-racks example's procedures load with the
+// master's DUT keywords, checked against the example's own contract, and a
+// name the contract lacks is refused by it.
+func TestTwoRacksProceduresLoad(t *testing.T) {
+	table := channel.NewTable()
+	for ch := 1; ch <= 2; ch++ {
+		table.Stream(chanSchema("psu1", ch))
+		table.Stream(measSchema("psu1", ch))
+	}
+	id, err := monitor.Identify("../../examples/two-racks/dut/dut-interface.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := &daemon{supplies: map[string]int{"psu1": 2}}
+	p := newProcs(d, "../../examples/two-racks/lab/procedures", table)
+	dp := &dutPeer{v: newPeerView(), id: id}
+	lib.AddDUT(p.lib, &rackAdapter{p: p}, dp)
+	for file, tests := range map[string]string{"sweep.robot": "Sweep,Threshold", "hold.robot": "Hold"} {
+		s, err := procedure.Load(p.dir+"/"+file, procedure.Env{Lib: p.lib, Channels: table})
+		if err != nil {
+			t.Fatalf("%s: %v", file, err)
+		}
+		if got := strings.Join(s.Tests(), ","); got != tests {
+			t.Errorf("%s: tests %s", file, got)
+		}
+	}
+	if err := dp.Monitor("heart"); err == nil || !strings.Contains(err.Error(), "abort, alive, speed, supply") {
+		t.Errorf("a monitor the contract lacks: %v", err)
 	}
 }

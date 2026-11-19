@@ -8,6 +8,9 @@
 #
 # The lab rack removes the stress when the DUT rack's watermark is more than
 # 100 ms old, or its abort monitor is dev (lab/limits.json). Ctrl-C stops all.
+#
+# BEHAVIOUR=glitch, restore, reset (the default) or never sets what the DUT does
+# when its supply dips below 9 V; see cmd/dutsim.
 set -e
 cd "$(dirname "$0")"
 
@@ -41,7 +44,7 @@ fi
 pids=""
 trap 'kill $pids 2>/dev/null' EXIT
 bin/psusim -addr 127.0.0.1:5025 -transcript lab/psusim.txt & pids="$pids $!"
-bin/dutsim -supply 127.0.0.1:5025 -behaviour reset -transcript dut/dutsim.txt vcan0 & pids="$pids $!"
+bin/dutsim -supply 127.0.0.1:5025 -behaviour "${BEHAVIOUR:-reset}" -transcript dut/dutsim.txt vcan0 & pids="$pids $!"
 bin/ktestd -https 127.0.0.1:8445 -state dut/state -tokens dut/tokens -limits dut/limits.json \
     -dbc ../../dut/dutsim.dbc -contract dut/dut-interface.json -sock /tmp/ktest-dut.sock -o dut/dut.logb vcan0 &
 pids="$pids $!"

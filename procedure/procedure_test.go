@@ -339,9 +339,18 @@ func TestRobotParses(t *testing.T) {
 	if err != nil || len(files) == 0 {
 		t.Fatalf("no fixtures: %v", err)
 	}
+	// The examples' procedures and resources are Robot syntax too.
+	for _, g := range []string{"../examples/*/procedures/*.robot", "../examples/*/*/procedures/*.robot", "../examples/*/*/actions.robot"} {
+		more, err := filepath.Glob(g)
+		if err != nil {
+			t.Fatal(err)
+		}
+		files = append(files, more...)
+	}
 	if _, err := procedure.Load(filepath.Join("testdata", "sweep.robot"), procedure.Env{Lib: lib.New(newRack()), Channels: newRack()}); err != nil {
 		t.Fatalf("the fixtures do not load here: %v", err)
 	}
+	t.Logf("%d files", len(files))
 	for _, f := range files {
 		out, err := exec.Command(py, "-c", robotCheck, f).CombinedOutput()
 		if err != nil {

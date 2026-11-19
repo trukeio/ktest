@@ -9,6 +9,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/rveen/logb"
@@ -145,8 +146,13 @@ type peerLink struct {
 	rules  *rules
 	events chan peerEvent
 
-	link, clock, ruleSt *teeStream
-	mirrors             map[string]*mirror
+	link, clock, ruleSt, judgeSt *teeStream
+	mirrors                      map[string]*mirror
+
+	// view is the DUT as the procedures' keywords see it, and lease the
+	// DUT's lease as the driver holds it, nil while it holds none.
+	view  *peerView
+	lease atomic.Pointer[string]
 
 	connected bool
 	lastLink  linkEvent // the last link record, so that a retry failing as the last did is not recorded again
@@ -227,6 +233,47 @@ func rulesSchema() *logb.Schema {
 	}, map[string]string{"source": "the ktestd daemon rules (limits.json)", "clock": "userspace: when the daemon decided"})
 }
 
+// <peer>.judgement: t 0–7, kind 8, from 16–23, to 24–31, offset 32–39,
+// uncertainty 40–47, monitors 48–111, result 112–207.
+const (
+	jgKind     = 8
+	jgFrom     = 16
+	jgTo       = 24
+	jgOffset   = 32
+	jgUnc      = 40
+	jgMonitors = 48
+	jgResult   = 112
+	jgBytes    = jgResult + 96
+)
+
+func judgementSchema(name string) *logb.Schema {
+	return record.Schema(name+".judgement", 8*jgBytes, []logb.Field{
+		uintF("kind", jgKind, 8, "", "1 which monitors deviated in [from, to]; 2 whether all were ok at the watermark to"),
+		{Name: "from", BitOffset: 8 * jgFrom, BitWidth: 64, Type: logb.TypeSint, Unit: "ns",
+			Desc: "the window's start, the DUT rack's clock, widened by the offset's uncertainty"},
+		{Name: "to", BitOffset: 8 * jgTo, BitWidth: 64, Type: logb.TypeSint, Unit: "ns",
+			Desc: "the window's end, likewise; for kind 2, the watermark the states were read at"},
+		{Name: "offset", BitOffset: 8 * jgOffset, BitWidth: 64, Type: logb.TypeSint, Unit: "ns",
+			Desc: "the clocks' offset the window was put on the DUT rack's clock with"},
+		{Name: "uncertainty", BitOffset: 8 * jgUnc, BitWidth: 64, Type: logb.TypeSint, Unit: "ns", Desc: "its uncertainty"},
+		strF("monitors", jgMonitors, 64, "the monitors judged, comma separated"),
+		strF("result", jgResult, 96, "kind 1: monitor=state for each that was dev or unknown, empty for none; kind 2: ok or not ok"),
+	}, map[string]string{"source": "the master's DUT keywords",
+		"clock": "userspace: this rack's clock when the judgement was made"})
+}
+
+func (p *peerLink) writeJudgement(w *tee, t time.Time, j judgement) error {
+	return w.Write(t, p.judgeSt, func(rec []byte) {
+		rec[jgKind] = j.kind
+		putUint64(rec[jgFrom:], uint64(j.from))
+		putUint64(rec[jgTo:], uint64(j.to))
+		putUint64(rec[jgOffset:], uint64(j.offset))
+		putUint64(rec[jgUnc:], uint64(j.unc))
+		putStr(rec, jgMonitors, 64, strings.Join(j.monitors, ","))
+		putStr(rec, jgResult, 96, j.result)
+	})
+}
+
 // mirrorSchema is a DUT rack stream as this rack records it.
 func mirrorSchema(name string, from *logb.Schema) (*logb.Schema, error) {
 	if from.AxisField != 0 || len(from.Fields) == 0 || from.Fields[0].BitWidth != 64 || from.RecordBits < 64 {
@@ -286,7 +333,7 @@ func newPeerLink(cfg peer.Config, r *rules, meta map[string]string) (*peerLink, 
 		}
 	}
 	return &peerLink{c: c, id: id, rules: r, events: make(chan peerEvent, 1024), mirrors: map[string]*mirror{},
-		holds: map[string]bool{ruleLost: true}}, nil
+		holds: map[string]bool{ruleLost: true}, view: newPeerView()}, nil
 }
 
 func sameContract(id *monitor.Identity, info peer.Info) error {
@@ -313,6 +360,9 @@ func (p *peerLink) declare(w *tee, t time.Time) error {
 		return err
 	}
 	if p.ruleSt, err = w.NewStream(rulesSchema); err != nil {
+		return err
+	}
+	if p.judgeSt, err = w.NewStream(func() *logb.Schema { return judgementSchema(p.c.Name()) }); err != nil {
 		return err
 	}
 	if err := p.writeLink(w, t, linkDown, "not yet connected"); err != nil {
@@ -423,12 +473,25 @@ func (p *peerLink) session(ctx context.Context, send func(peerEvent) bool) error
 func (p *peerLink) leaseLoop(ctx context.Context, send func(peerEvent) bool) {
 	const ttl = 30 * time.Second
 	token := ""
+	defer p.lease.Store(nil)
 	for {
 		var err error
 		if token == "" {
-			token, err = p.c.Lease(ctx, "", ttl)
+			// Taken, then armed: holding the DUT's lease is this rack's
+			// intent to change its mode and run its actions.
+			if token, err = p.c.Lease(ctx, "", ttl); err == nil {
+				if err = p.c.Arm(ctx, token); err != nil {
+					token = ""
+				}
+			}
 		} else if err = p.c.Renew(ctx, token); err != nil {
 			token = ""
+		}
+		if token != "" {
+			t := token
+			p.lease.Store(&t)
+		} else {
+			p.lease.Store(nil)
 		}
 		if err != nil && ctx.Err() == nil {
 			send(peerEvent{link: &linkEvent{linkRefused, "the DUT's lease: " + err.Error()}})
@@ -484,6 +547,7 @@ func (l *loop) peerEvent(e peerEvent) {
 			p.connected = false
 			p.wmPeer = 0
 		}
+		p.view.link(p.connected)
 		if *e.link == p.lastLink {
 			break // the driver retrying, and failing as it did: nothing new to say
 		}
@@ -493,6 +557,7 @@ func (l *loop) peerEvent(e peerEvent) {
 		}
 	case e.clock != nil:
 		p.offset = e.clock
+		p.view.clock(e.clock)
 		err := l.w.Write(e.clock.At, p.clock, func(rec []byte) {
 			putUint64(rec[ckOffset:], uint64(e.clock.Offset))
 			putUint64(rec[ckUnc:], uint64(e.clock.Uncertainty))
@@ -543,6 +608,7 @@ func (l *loop) mirror(it *peer.Item) {
 	if err != nil {
 		fatalf("write: %v", err)
 	}
+	p.view.observe(it)
 	switch {
 	case name == "mon.watermark":
 		if it.PeerT > p.wmPeer {
