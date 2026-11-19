@@ -60,6 +60,7 @@ The full design is in [doc/test-software-outline.md](doc/test-software-outline.m
 | `cmd/logbcheck` | Checks a recording against independent references, such as candump logs and simulator transcripts. It also checks every control decision against the declared limits. |
 | `cmd/psusim` | A simulated two-channel bench supply (Keysight SCPI dialect) with a resistive load on each channel. |
 | `cmd/scopesim` | A simulated oscilloscope (Siglent SDS1000X-E SCPI dialect). |
+| `cmd/dutsim` | A simulated DUT on a CAN interface. It sends an alive counter and an engine speed, reads its supply from `psusim`, and reacts to a dip in one of four configured ways. Its frames are in `dut/dutsim.dbc`. |
 | `cmd/vcanprobe` | Measures what a SocketCAN interface can actually do (timestamping, pacing, overflow). |
 
 The Go packages are `can/` (SocketCAN), `record/` (frames to Logb), `stream/`

@@ -361,7 +361,7 @@ $ git clone https://github.com/rveen/ktest
 $ cd ktest
 $ go build -o bin/ ./cmd/...
 $ ls bin
-canlogb  ktestd  logbcheck  psusim  scopesim  vcanprobe</code></pre>
+canlogb  dutsim  ktestd  logbcheck  monitor-check  psusim  scopesim  vcanprobe</code></pre>
 <p>For a small ARM board, cross-compile on any machine and copy the binary over:</p>
 <pre class="code"><code>$ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build ./cmd/ktestd ./cmd/vcanprobe</code></pre>
 <p>To test bus work without hardware, install <code>can-utils</code> (<code>candump</code>, <code>canplayer</code>, <code>cangen</code>) and make a virtual bus:</p>
@@ -633,6 +633,17 @@ $ claude mcp add ktest -- ktest-mcp -url https://rack:8443 \
 <pre class="code"><code>psusim   [-addr :5025] [-channels 30:3:10,6:5:100] [-transcript file]
 scopesim [-addr :5026] [-channels 'sine:amp=1,freq=1000;dc:amp=0'] [-on 1] [-transcript file]</code></pre>
 <p><code>psusim</code> is a supply that speaks Keysight-style SCPI, clamps setpoints beyond a channel's rating and regulates into a resistive load (volts : amps : ohms per channel). <code>scopesim</code> is a Siglent SDS1202X-E with signals made from a description. Both keep a transcript for <code>logbcheck</code>.</p>
+<h4><code>dutsim</code>: a device under test without hardware</h4>
+<pre class="code"><code>dutsim [-supply 127.0.0.1:5025] [-ch 1] [-behaviour glitch|restore|reset|never] [-vmin 9] [-vrestore 9.5]
+       [-boot 100ms] [-speed 3000] [-glitch-speed 0] [-period 10ms] [-poll 5ms] [-transcript file] interface</code></pre>
+<p>A DUT on a CAN interface, powered from a <code>psusim</code> channel. While it runs, it sends <code>DutStatus</code> (an alive counter, modulo 16) and <code>EngineData</code> (<code>EngineSpeed</code>, in rpm) every <code>-period</code>. It boots the first time its supply reaches <code>-vrestore</code>. When the supply falls below <code>-vmin</code>, it reacts as <code>-behaviour</code> says:</p>
+<ul>
+<li><code>glitch</code>: it keeps talking, but reports <code>-glitch-speed</code> until the supply is restored.</li>
+<li><code>restore</code>: it falls silent, and boots again once the supply is restored.</li>
+<li><code>reset</code>: it falls silent, and stays silent until it receives a reset frame (<code>DutReset</code> with <code>Request</code> = 1, <code>cansend vcan0 700#01</code>).</li>
+<li><code>never</code>: it falls silent for good.</li>
+</ul>
+<p>The frames are laid out in <code>dut/dutsim.dbc</code>; start <code>ktestd</code> with <code>-dbc dut/dutsim.dbc</code> to decode them. <code>dutsim</code> only queries the supply (<code>MEAS:VOLT?</code>) and never clears its error queue, which belongs to the rack that drives the supply. Its transcript is its own account of the run: every supply crossing, reset frame and change of state, with its time. <span class="st built">built</span></p>
 <h4><code>vcanprobe</code>: what this kernel and adapter can do</h4>
 <pre class="code"><code>vcanprobe [-i vcan0] [-run regexp] [-list] [-json]</code></pre>
 

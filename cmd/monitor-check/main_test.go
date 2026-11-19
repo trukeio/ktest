@@ -2,11 +2,15 @@ package main
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/rveen/ktest/dut"
 )
 
 // The fixture is a recording of examples/supply-bench running its ramp
@@ -131,4 +135,91 @@ func TestModeNote(t *testing.T) {
 			t.Errorf("a monitor of a mode never entered: %v", x)
 		}
 	}
+}
+
+// The second fixture is ktestd recording vcan0 while dutsim ran on it with
+// -behaviour restore, powered from psusim channel 1, and dutsim-dip.robot
+// dipped that supply to 6 V for 300 ms (testdata/dutsim-dip.*). dutsim's
+// transcript is its own account of the run, written by nothing that writes
+// Logb, and alive's transitions are held to it rather than to themselves:
+// alive goes dev within 30 ms (its age limit) and a frame period of the DUT
+// stopping, and ok within three frame periods of it running again: its first
+// frame waits for dutsim's next tick, and delta() has no value until the
+// second frame.
+func TestDutsimFixture(t *testing.T) {
+	r, err := check("testdata/dutsim.json", "testdata/dutsim-dip.logb", "mode.applied")
+	if err != nil {
+		t.Fatal(err)
+	}
+	epoch := recordingEpoch(t, "testdata/dutsim-dip.logb")
+	stopped, running := dutStates(t, "testdata/dutsim-dip.txt", epoch)
+	var dev, ok []int64
+	for _, x := range r.tr {
+		if x.Monitor != "alive" {
+			continue
+		}
+		switch string(x.To) {
+		case "dev":
+			dev = append(dev, x.T)
+		case "ok":
+			ok = append(ok, x.T)
+		}
+	}
+	const period = int64(10 * time.Millisecond)
+	within := func(what string, got, want []int64, lo, hi int64) {
+		t.Helper()
+		if len(got) != len(want) {
+			t.Fatalf("alive went %s %d times, and the DUT's transcript says %d", what, len(got), len(want))
+		}
+		for i := range got {
+			if d := got[i] - want[i]; d < lo || d > hi {
+				t.Errorf("alive %s %d: %v after the transcript's event, want %v to %v",
+					what, i, time.Duration(d), time.Duration(lo), time.Duration(hi))
+			}
+		}
+	}
+	within("dev", dev, stopped, int64(30*time.Millisecond)-period, int64(30*time.Millisecond)+period)
+	within("ok", ok, running, 0, 3*period)
+}
+
+// recordingEpoch is the wall time ktestd's recording counts its axis from. The
+// recorder begins its first segment at its epoch and stamps the sync frame
+// with it, so it is the first sync frame's wall time: the 16-byte sync
+// pattern, then the segment's sequence number and its wall time, both u64
+// little-endian.
+func recordingEpoch(t *testing.T, path string) int64 {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := bytes.Index(b, []byte("LOGBSYNC"))
+	if i < 0 || len(b) < i+32 {
+		t.Fatalf("%s has no sync frame", path)
+	}
+	return int64(binary.LittleEndian.Uint64(b[i+24:]))
+}
+
+// dutStates reads the times dutsim stopped and started running, in ns on the
+// recording's axis.
+func dutStates(t *testing.T, path string, epoch int64) (stopped, running []int64) {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+		stamp, what, _ := strings.Cut(line, " ")
+		at, err := time.Parse(dut.TimeFormat, stamp)
+		if err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+		switch what {
+		case "state stopped":
+			stopped = append(stopped, at.UnixNano()-epoch)
+		case "state running":
+			running = append(running, at.UnixNano()-epoch)
+		}
+	}
+	return stopped, running
 }

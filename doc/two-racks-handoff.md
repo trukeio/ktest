@@ -416,6 +416,30 @@ For M5, two things this milestone found:
   - never recover (class IV).
 - **Other:** it keeps a transcript for checks.
 - **Why it comes now:** it makes the whole two-rack setup testable without hardware, on one machine.
+- **Done (2026-11-19).** Package `dut` is the DUT as a state machine with no clock and no bus (times come in with every event), and its frames' codec. `cmd/dutsim` connects it to a CAN socket and a psusim poller. The frames are in `dut/dutsim.dbc` (`DutStatus.counter`, `EngineData.EngineSpeed`, `DutReset.Request`), which is embedded in dutsim and given to `ktestd -dbc`. A second `monitor-check` fixture is a ktestd recording of dutsim through a 300 ms dip to 6 V (`cmd/monitor-check/testdata/dutsim-dip.*`), and its test holds `alive`'s transitions to dutsim's transcript.
+- **Measured live** on `vcan0` with psusim and ktestd, using the `restore` and `reset` behaviours (for `reset`, the reset frame was sent with `cansend vcan0 700#01`). `logbcheck -control -psu` passes on the `reset` recording against a candump of the bus: 361 frames byte for byte, 16 control decisions, 10 supply writes against psusim's transcript.
+
+#### M4: choices for review
+
+- **Behaviours are named, not numbered.** The plan calls the dip reactions "class II, III, IV", but ISO 7637-2's five functional status classes, which the contract's `"enums": {"class": ["I" … "V"]}` suggests, number them one higher: `glitch` is II (out of tolerance during the dip, recovers by itself), `restore` III (not working during it, recovers by itself), `reset` IV (needs a reset), `never` V. dutsim says `-behaviour restore` rather than a class. M7's expected results should use the ISO numbering. **Please confirm.**
+- **What the DUT does at the edges:**
+  - The first boot is always clean, whatever the behaviour: a power-on is a reset.
+  - A dip during a boot restarts the boot for every behaviour, `never` included, since the DUT was not yet running.
+  - A reset frame reboots a hung DUT, and a running one too. It is ignored while the supply is low, and the transcript says so.
+  - How deep a dip goes does not matter: `glitch` tolerates 0 V.
+  - `-vrestore` (default `-vmin` + 0.5 V) is the hysteresis.
+  - The counter restarts at 0 on every boot.
+- **The supply belongs to the other rack.** dutsim does not use `psu.Dial`, because that sends `*CLS` and would clear the error queue the master's daemon reads. It only sends `MEAS:VOLT?`. These queries fill psusim's transcript (200 a second at the default 5 ms poll), and `logbcheck` skips them.
+- **A supply that stops answering stops dutsim**, with an error and a transcript line. dutsim does not guess the voltage.
+- **`-poll` slower than `-period` is refused**, so that a dip the DUT should react to is not missed between readings.
+- **A userspace ticker, not CAN_BCM.** The counter changes with every frame. The jitter is well inside `age(Alive) < 30ms` on vcan.
+- **Reading the recording's epoch.** A ktestd recording's axis counts from its epoch. The recording states the epoch only as the first sync frame's wall time, which logb calls a coarse hint (ktestd writes it exactly), and inside decoded streams' namespaces. The fixture test reads the sync frame. M7's check of verdicts against the transcript needs the same thing, so a `recording.epoch` metadata key would be the honest way to state it.
+
+For M5 and M7, three things this milestone found:
+
+- **The DUT sees a dip before the rack does.** dutsim polls every 5 ms, while ktestd measures the supply every 100 ms. In the fixture, `alive` goes `dev` about 34 ms before `vx` does. Any rule or keyword that compares the DUT's reaction with the stress has to allow for the stress measurement's period.
+- **`alive` can pass through `unknown` on its way to `dev`.** Staleness (3 × the observed 10 ms period) and the `age(Alive) < 30ms` deadline fall within a fraction of a millisecond of each other. When staleness comes first, `delta(Alive.counter)` goes unknown while `age` is still true, so the monitor shows `unknown` for about 0.3 ms before `dev`. That is correct Kleene logic, as accepted in M3, but a rule that acts on `unknown` would see it.
+- **After a reboot, `alive` goes `dev → unknown → ok`.** A sampled input seen once has no value yet (M3), so the first frame gives `unknown` and the second gives `ok`.
 
 ### M5: secondary online (monitors, watermark, `/stream/sub`, modes, actions)
 
