@@ -454,6 +454,61 @@ For M5 and M7, three things this milestone found:
   - a stalled evaluator stops the watermark;
   - a slow subscriber is disconnected without affecting the recording;
   - lease expiry leaves the mode's cyclic frames running.
+- **Split in two.** M5a is the monitors online: §4.3 and §4.4. M5b is modes and actions: §4.5, the secondary's keyword library and cyclic frames held by the daemon. The lease-expiry test belongs to M5b.
+
+#### M5a: monitors online and `/stream/sub` (done 2026-11-19)
+
+- **Built:**
+  - `ktestd -contract dut-interface.json`.
+  - `monitor.Online` and `monitor.Tap`, the online evaluator and the loop's non-blocking side of it.
+  - The streams `mon.<name>`, `mon.watermark` and `mon.gap`.
+  - A third writer behind `GET /stream/sub?ch=…`, with the hub filtering by stream.
+  - `monitor-check -live` and `cmd/sublat`.
+  - `recording.epoch` in every recording's metadata.
+- **Tests:**
+  - online reordering gives what the offline evaluator gives;
+  - the watermark is monotonic over 5000 random items, and never ahead of the clock less the window, or of a transition;
+  - a late record is a gap;
+  - a full tap is a gap, and a lost tick is not;
+  - a stalled evaluator stops the watermark, and its queue fills into a gap without blocking the tap;
+  - a filtered subscriber gets only its streams, joining early or late, and a slow one is dropped while the recording stays whole;
+  - `TestLiveIsReplay`: a ktestd recording (`cmd/monitor-check/testdata/rack-live.logb`) whose live transitions are the replay's, to the nanosecond, and a transition moved by 1 ns is caught.
+- **Measured live** on `vcan0`. The setup was dutsim with `-behaviour restore` behind psusim, `ktestd -contract` with `dutsim.json`, and a procedure dipping the supply 100 times, with `sublat` subscribed over HTTPS on loopback:
+
+  | Run (65 s each) | Transitions | p50 | p90 | p99 | max | Watermark p50 / p99 | Gaps |
+  |---|---|---|---|---|---|---|---|
+  | 1 | 709 | 3.21 ms | 3.68 ms | 4.45 ms | 9.96 ms | 2.44 / 3.29 ms | 0 |
+  | 2 | 717 | 3.20 ms | 3.81 ms | 4.84 ms | 9.84 ms | 2.43 / 3.30 ms | 0 |
+
+  In both runs, every transition the rack recorded is the replay's, to the nanosecond (710 and 718), and `logbcheck -control -psu` passes on a rack recording. Shorter runs with other settings, about 150 transitions each:
+  - a 1 ms window: p50 2.1 ms, with two late-record gaps in one of two runs;
+  - a 0.5 ms tick: no gain;
+  - `-codec none`: no change. The 200 ms zstd flush is not the tail.
+
+#### M5a: choices for review
+
+- **The monitors' clock is the last moment the loop was caught up**, not the time a record is written. That moment is when its input queues and both CAN sockets were empty, and the sockets are asked with a zero-timeout `poll` (`can.Conn.Pending`; `SIOCINQ` gives ENOTTY on AF_CAN). Two measured failures led here:
+  - With the clock read at write time, after any pause Go's `select` handled a tick or a fresh frame before a supply reading already queued. The watermark passed the reading, which was then late (2 gaps in 6 s).
+  - With only the Go queues checked, frames still in the kernel's socket after a pause were stamped and invisible (1 gap in 65 s).
+
+  With the sockets checked, there were 0 gaps in 130 s.
+- **A record behind the watermark is a gap**, the same as a lost one. Every monitor goes `unknown` at the watermark, the evaluator starts again from nothing, and the mode carries over. The transitions already emitted cannot be taken back, and a replay would not match them, so this is the only honest answer. The cost: a 2 ms window has no margin for a real instrument whose reading arrives later than that after its stamp. Such an instrument needs a larger `-mon-window`, and pays for it in latency.
+- **A 1 ms tick, not 10 ms.** The loop hands the monitors its clock every `-mon-tick` (1 ms). `mon.watermark` is recorded every `-watermark` (10 ms), as §4.3 says. A 10 ms tick would put the p99 near 13 ms. M6's 10 ms timer for rules is separate.
+- **Defaults:** `-mon-window 2ms`, `-mon-queue 8192`.
+- **Stream layouts:**
+  - `mon.<name>`: `state` (held, text by `ValueToText`, so `mon.alive.state == "dev"` works in a condition), `from`, `cause`. Each monitor's first record is its state at start, `unknown → unknown`, cause `start`.
+  - `mon.watermark`: the record's time is the watermark itself, with `upto` repeating it in Unix ns.
+  - `mon.gap`: `from`, `to`, `lost`, `reason`, at the watermark where every monitor went unknown.
+- **`/stream/sub`:**
+  - `ch` globs match stream names, not channels.
+  - `mon.watermark`, `mon.gap`, `mode.*` and all metadata are always sent. `mon.gap` was added to §4.4's list, because a watermark is only half the story without it.
+  - It carries no waveforms and no acquisitions.
+  - Over plain `-http` too, read-only, as `/stream/live` is.
+- **The contract is checked before the recording file is created**, against the streams the configuration will produce: DBC messages through `record.DecodedSchema`, supplies, scopes, procedures, the panel. The procedures' channel table gets the DBC streams at start too, so a procedure may read a signal the bus has not carried yet.
+- **`recording.epoch`** is new metadata in every recording, and each of the three writers states its own. `sublat` uses it, and M6 and M7 can.
+- **`monitor-check` replays the recorded `mon.watermark` as the evaluator's `Advance`**, after the records of the same instant, as it happened live. `-live` compares up to the last watermark and the first gap. A replay sees records the live evaluator lost, so it gives what the rack would have given without the gap.
+- **Live streams keep no index (decided 2026-11-19).** `logb.Writer` appended to its index for every DATA frame, for the INDEX it writes at `Close`, and never freed it. The `/stream/sub` writer writes a frame per record, so its memory grew by one entry per record for the daemon's whole life: measured at 2.3× peak RSS in a 6 s `cangen` flood, and at 2,000 frames/s about 5 GB a day. The rack writer grew the same way, about a hundred times slower. logb gained `Writer.NoIndex`, and SPEC §9 now says a writer may omit INDEX. ktest's `record.Config` gained `Live`, set for the rack and subscription streams. The flood's peak RSS is back to 183 MB.
+- **Cost under a flood.** In a 5 s `cangen -g 0` flood (about 250k frames/s, more than any real bus), ktestd records about as many frames as before (1.25M and 1.31M in two runs, against 1.28M), with about 7% more user CPU, because every record is encoded a third time. A hub with no subscriber no longer copies DATA frames.
 
 ### M6: peer driver and daemon rules (master)
 

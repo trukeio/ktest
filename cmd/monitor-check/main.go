@@ -48,6 +48,7 @@ func main() {
 	expect := flag.String("expect", "", "ok, or dev@t1,t2,...: the deviations expected, in seconds from the recording's start")
 	tol := flag.Duration("tol", 50*time.Millisecond, "how far from an expected time a deviation may begin")
 	mode := flag.String("mode", "mode.applied", "the channel holding the DUT's mode")
+	live := flag.Bool("live", false, "also hold the monitors' transitions the rack recorded live to the replay")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "usage: monitor-check [flags] dut-interface.json recording.logb\n")
 		flag.PrintDefaults()
@@ -75,7 +76,33 @@ func main() {
 	} else {
 		writeText(os.Stdout, res)
 	}
+	failed := false
+	if *live {
+		if fails := compareLive(res); len(fails) > 0 {
+			for _, f := range fails {
+				fmt.Fprintf(os.Stderr, "monitor-check: %s\n", f)
+			}
+			failed = true
+		} else {
+			n := 0
+			upto := min(res.liveWM, res.firstGap-1)
+			for _, x := range res.live {
+				if x.T <= upto {
+					n++
+				}
+			}
+			fmt.Fprintf(os.Stderr, "monitor-check: the %d transitions the rack recorded up to its last watermark, %+.6fs, "+
+				"are the replay's, to the nanosecond\n", n, res.rel(upto))
+			if res.firstGap != math.MaxInt64 {
+				fmt.Fprintf(os.Stderr, "monitor-check: the rack recorded a gap at %+.6fs; transitions after it were not compared\n",
+					res.rel(res.firstGap))
+			}
+		}
+	}
 	if exp == nil {
+		if failed {
+			os.Exit(1)
+		}
 		return
 	}
 	if fails := exp.judge(res, *tol); len(fails) > 0 {
@@ -85,6 +112,9 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Fprintf(os.Stderr, "monitor-check: %s\n", exp.describe(*tol))
+	if failed {
+		os.Exit(1)
+	}
 }
 
 // result is a replay: the transitions, and the recording's time origin.
@@ -95,6 +125,13 @@ type result struct {
 	records  int
 	tr       []monitor.Transition
 	notes    []string
+
+	// What the rack recorded live, when the recording has it: the monitors'
+	// transitions, the last watermark, and the first gap.
+	live     []monitor.Transition
+	liveWM   int64 // 0 without one
+	firstGap int64 // math.MaxInt64 without one
+	haveLive bool
 }
 
 type sample struct {
@@ -102,6 +139,7 @@ type sample struct {
 	stream string
 	rec    []byte
 	mode   *string
+	adv    bool // a recorded watermark: the live evaluator's time reached t
 }
 
 // check replays recording through contract.
@@ -135,8 +173,11 @@ func check(contractPath, recPath, modeChannel string) (*result, error) {
 	for _, s := range e.Streams() {
 		want[s] = true
 	}
+	res.firstGap = math.MaxInt64
 
 	var samples []sample
+	var gaps []string
+	var gapT []int64
 	err = scan(recPath, nil, func(b *logb.Batch) error {
 		for i := 0; i < int(b.Count); i++ {
 			// Every record moves the recording's span; only the inputs' and
@@ -153,6 +194,38 @@ func check(contractPath, recPath, modeChannel string) (*result, error) {
 			res.start, res.end = min(res.start, t), max(res.end, t)
 			name := b.Schema.Name
 			isMode := modeRef != nil && name == modeRef.Stream()
+			switch {
+			case name == "mon.watermark":
+				// The live evaluator's clock: replayed as its Advance, after
+				// every record of the same instant, as it was live.
+				samples = append(samples, sample{t: t, adv: true})
+				res.liveWM = max(res.liveWM, t)
+				continue
+			case name == "mon.gap":
+				res.firstGap = min(res.firstGap, t)
+				rec, err := b.Record(i)
+				if err != nil {
+					return err
+				}
+				g := map[string]expr.Value{}
+				for k := range b.Schema.Fields {
+					g[b.Schema.Fields[k].Name] = channel.Decode(b.Schema, rec, k)
+				}
+				gaps = append(gaps, fmt.Sprintf("the rack recorded a gap at %%+.6fs: %v records not used (%s)",
+					g["lost"].Num, g["reason"].Str))
+				gapT = append(gapT, t)
+				continue
+			case strings.HasPrefix(name, "mon."):
+				x, err := liveTransition(b, i, t)
+				if err != nil {
+					return err
+				}
+				res.haveLive = true
+				if x.From != x.To {
+					res.live = append(res.live, x)
+				}
+				continue
+			}
 			if !want[name] && !isMode {
 				continue
 			}
@@ -182,12 +255,17 @@ func check(contractPath, recPath, modeChannel string) (*result, error) {
 	// A recording is written stream by stream, in batches, so its records
 	// are in time order within a stream and not across streams. The
 	// evaluator takes them in time order; ties keep the file's order.
-	sort.SliceStable(samples, func(i, j int) bool { return samples[i].t < samples[j].t })
+	sort.SliceStable(samples, func(i, j int) bool {
+		a, b := samples[i], samples[j]
+		return a.t < b.t || a.t == b.t && !a.adv && b.adv
+	})
 
 	lastMode := ""
 	for _, s := range samples {
 		var tr []monitor.Transition
-		if s.mode != nil {
+		if s.adv {
+			tr, err = e.Advance(s.t)
+		} else if s.mode != nil {
 			if *s.mode == lastMode {
 				continue // a held mode restated at a segment is not a new entry
 			}
@@ -218,6 +296,9 @@ func check(contractPath, recPath, modeChannel string) (*result, error) {
 	}
 	if res.start == math.MaxInt64 {
 		res.start = 0
+	}
+	for i, g := range gaps {
+		res.notes = append(res.notes, fmt.Sprintf(g, res.rel(gapT[i])))
 	}
 	return res, nil
 }
@@ -254,6 +335,71 @@ func scan(path string, setup func(*logb.Reader), batch func(*logb.Batch) error) 
 }
 
 func (r *result) rel(t int64) float64 { return float64(t-r.start) / 1e9 }
+
+// liveTransition reads record i of a mon.<name> stream.
+func liveTransition(b *logb.Batch, i int, t int64) (monitor.Transition, error) {
+	rec, err := b.Record(i)
+	if err != nil {
+		return monitor.Transition{}, err
+	}
+	x := monitor.Transition{T: t, Monitor: strings.TrimPrefix(b.Schema.Name, "mon.")}
+	for k := range b.Schema.Fields {
+		v := channel.Decode(b.Schema, rec, k)
+		switch b.Schema.Fields[k].Name {
+		case "state":
+			x.To = monitor.State(v.Str)
+		case "from":
+			x.From = monitor.State(v.Str)
+		case "cause":
+			x.Cause = v.Str
+		}
+	}
+	return x, nil
+}
+
+// compareLive holds what the rack recorded live to the replay, up to the
+// last watermark it recorded, which is as far as it vouched for, and up to
+// its first gap, after which the live evaluator started again from nothing
+// and the replay, which saw every record, did not.
+func compareLive(r *result) []string {
+	if !r.haveLive {
+		return []string{"the recording has no mon.* streams: it was not made by a rack running monitors"}
+	}
+	upto := min(r.liveWM, r.firstGap-1)
+	var replay, live []string
+	for _, x := range r.tr {
+		if x.T <= upto {
+			replay = append(replay, fmt.Sprintf("%020d %+.9fs %s %s→%s", x.T-r.start, r.rel(x.T), x.Monitor, x.From, x.To))
+		}
+	}
+	for _, x := range r.live {
+		if x.T <= upto {
+			live = append(live, fmt.Sprintf("%020d %+.9fs %s %s→%s", x.T-r.start, r.rel(x.T), x.Monitor, x.From, x.To))
+		}
+	}
+	// The rack's are read stream by stream, so they are put in time order;
+	// transitions of one instant are compared in the order of the monitors'
+	// names, which is no order the evaluator promises.
+	sort.Strings(replay)
+	sort.Strings(live)
+	var fails []string
+	for i := 0; i < max(len(replay), len(live)); i++ {
+		var a, b string
+		if i < len(replay) {
+			a = replay[i]
+		}
+		if i < len(live) {
+			b = live[i]
+		}
+		if a != b {
+			fails = append(fails, fmt.Sprintf("transition %d: the replay gives %q and the rack recorded %q", i+1, cut(a), cut(b)))
+			if len(fails) == 5 {
+				break
+			}
+		}
+	}
+	return fails
+}
 
 func writeText(w io.Writer, r *result) {
 	fmt.Fprintf(w, "contract %s, sha256 %s\n", r.contract.Name, r.contract.Hash)
@@ -352,4 +498,12 @@ func (e *expectation) describe(tol time.Duration) string {
 		return "no monitor deviates, as expected"
 	}
 	return fmt.Sprintf("every deviation begins within %v of one of the %d times expected, and each time has one", tol, len(e.times))
+}
+
+// cut drops the sort key compareLive puts in front of a transition.
+func cut(s string) string {
+	if _, rest, ok := strings.Cut(s, " "); ok {
+		return rest
+	}
+	return s
 }

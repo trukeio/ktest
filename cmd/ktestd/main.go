@@ -232,6 +232,7 @@ import (
 
 	"github.com/rveen/ktest/can"
 	"github.com/rveen/ktest/channel"
+	"github.com/rveen/ktest/monitor"
 	"github.com/rveen/ktest/procedure/lib"
 	"github.com/rveen/ktest/psu"
 	"github.com/rveen/ktest/record"
@@ -271,8 +272,14 @@ func main() {
 			"PG01-E02D) or sub255 (PG01-E02C). The two differ by one code on every negative sample")
 		scopeTrdl = flag.Bool("scope-trigger-delay", false, "take TRDL into a scope's time axis, as third-party readers do "+
 			"and the programming guides do not")
-		supplies supplyFlags
-		scopes   scopeFlags
+		contractPath = flag.String("contract", "", "a DUT contract, dut-interface.json: run its monitors live, as a DUT rack")
+		monWindow    = flag.Duration("mon-window", 2*time.Millisecond, "-contract: how long a record is held for "+
+			"earlier ones from other clocks to arrive; one later than this is a gap")
+		monTick   = flag.Duration("mon-tick", time.Millisecond, "-contract: how often the loop gives the monitors its clock")
+		watermark = flag.Duration("watermark", 10*time.Millisecond, "-contract: how often mon.watermark is recorded")
+		monQueue  = flag.Int("mon-queue", 8192, "-contract: how many records may wait for the monitors before they are lost, as a gap")
+		supplies  supplyFlags
+		scopes    scopeFlags
 	)
 	flag.Var(&supplies, "psu", "a bench supply to drive, SCPI over TCP: name=host:port[,channels]; repeatable")
 	flag.Var(&scopes, "scope", "an oscilloscope to drive, SCPI over TCP: name=host:port[,channels][,full=ch1+ch2];\n"+
@@ -400,6 +407,38 @@ func main() {
 		cfg.DB = db
 	}
 
+	// A contract is checked before anything is written, against the streams
+	// this daemon will record, so that one naming a channel it never will
+	// refuses the start.
+	var dm *dutMon
+	var online *monitor.Online
+	var monIn <-chan monitor.Item
+	if *contractPath != "" {
+		switch {
+		case *monWindow < 0 || *monTick <= 0 || *watermark <= 0 || *monQueue <= 0:
+			fatalf("-mon-window may be 0, and -mon-tick, -watermark and -mon-queue must be positive")
+		case *watermark < *monTick:
+			fatalf("-watermark %v is shorter than -mon-tick %v: the watermark cannot be recorded more often than it moves",
+				*watermark, *monTick)
+		}
+		ct, err := contractChannels(iface, cfg.DB, supplies, scopes, *procDir != "")
+		if err != nil {
+			fatalf("contract: %v", err)
+		}
+		c, err := loadContract(*contractPath, ct, &cfg)
+		if err != nil {
+			fatalf("contract: %v", err)
+		}
+		if online, err = monitor.NewOnline(c, *monWindow, *watermark); err != nil {
+			fatalf("contract: %v", err)
+		}
+		dm = &dutMon{c: c, out: make(chan monitor.Output, 64), tick: *monTick}
+		dm.tap, monIn = monitor.NewTap(online, *monQueue)
+		cfg.Meta["dut.monitors.window"] = monWindow.String()
+		cfg.Meta["dut.monitors.watermark"] = watermark.String()
+		cfg.Meta["dut.monitors.queue"] = strconv.Itoa(*monQueue)
+	}
+
 	// The network listener's credentials are settled before anything is opened,
 	// and written into the recording: which certificate the daemon presented,
 	// and which names could act, with their roles — never their hashes.
@@ -483,7 +522,20 @@ func main() {
 	// for a procedure's conditions. The recording's writer feeds it; the
 	// rack's writer carries the same records and does not.
 	table := channel.NewTable()
+	// A decoded message's stream is declared the first time the bus carries
+	// it, and a procedure that reads one is checked when it is loaded, which
+	// may be before: the table knows them all from the start.
+	if err := declareDecoded(table, iface, cfg.DB); err != nil {
+		fatalf("%v", err)
+	}
 	cfg.OnStream, cfg.OnRecord = table.Stream, table.Record
+	if dm != nil {
+		// The monitors' tap, beside the table: it never blocks the loop.
+		cfg.OnRecord = func(s *logb.Schema, t time.Time, rec []byte) {
+			table.Record(s, t, rec)
+			dm.tap.Record(s.Name, t, rec)
+		}
+	}
 	fw, err := record.New(io.MultiWriter(bw, hub), cfg)
 	if err != nil {
 		fatalf("%v", err)
@@ -491,14 +543,23 @@ func main() {
 	// The rack's stream: the same records, uncompressed and unindexed. See tee.
 	rackHub := stream.New()
 	rcfg := cfg
-	rcfg.Codec, rcfg.Filter, rcfg.Path = logb.CodecNone, logb.FilterNone, ""
+	rcfg.Codec, rcfg.Filter, rcfg.Path, rcfg.Live = logb.CodecNone, logb.FilterNone, "", true
 	rcfg.Warn = nil // said once, by the recording's writer
 	rcfg.OnStream, rcfg.OnRecord = nil, nil
 	rw, err := record.New(rackHub, rcfg)
 	if err != nil {
 		fatalf("%v", err)
 	}
-	w := &tee{file: fw, rack: rw}
+	// The subscription stream: the same records again, uncompressed, each in
+	// a frame of its own the moment it is written. See tee.
+	subHub := stream.New()
+	scfg := rcfg
+	scfg.PerFrame = 1
+	sw, err := record.New(subHub, scfg)
+	if err != nil {
+		fatalf("%v", err)
+	}
+	w := &tee{file: fw, rack: rw, sub: sw}
 
 	d := &daemon{bus: iface, db: cfg.DB, panelPath: *panelPath,
 		supplies: map[string]int{}, scopes: map[string]int{},
@@ -519,6 +580,10 @@ func main() {
 	// net/http reports what goes wrong on a connection — a client hanging up
 	// mid-handshake, say — through a logger; this one says whose it is.
 	srvLog := log.New(os.Stderr, "ktestd: ", 0)
+	d.subHub = subHub
+	if dm != nil {
+		d.procs.contract = dm.c.Hash
+	}
 	ctl := &http.Server{Handler: local(d.mux(hub, rackHub)), ErrorLog: srvLog}
 	go serve(ctl, ln)
 	fmt.Fprintf(os.Stderr, "ktestd: recording %s to %s, control on unix://%s, cyclic floor %v (%s)\n",
@@ -546,7 +611,7 @@ func main() {
 		if err != nil {
 			fatalf("%v", err)
 		}
-		tcp = &http.Server{Handler: readOnly(hub, rackHub), ErrorLog: srvLog}
+		tcp = &http.Server{Handler: readOnly(hub, rackHub, subHub), ErrorLog: srvLog}
 		go serve(tcp, tl)
 		fmt.Fprintf(os.Stderr, "ktestd: streaming read-only on http://%s/stream/live\n", tl.Addr())
 	}
@@ -598,7 +663,7 @@ func main() {
 	// short on purpose: a driver that cannot hand one over throws it away and
 	// says so, rather than queueing megabytes the rack will never draw.
 	scopeEvents := make(chan scopeEvent, 8)
-	l := &loop{d: d, w: w, bw: bw, txc: txc, bcm: bcm, bcmc: bcmc, events: events,
+	l := &loop{d: d, w: w, bw: bw, txc: txc, rxc: mon, bcm: bcm, bcmc: bcmc, events: events,
 		scopes: scopeEvents, rackHub: rackHub,
 		floor: time.Duration(lim.MinPeriod), limits: lim.Channels, tasks: map[uint32]*task{},
 		bus: &inst{name: iface}, insts: map[string]*inst{}}
@@ -676,6 +741,15 @@ func main() {
 	if *procDir != "" {
 		fmt.Fprintf(os.Stderr, "ktestd: procedures from %s, library %s\n", *procDir, lib.Version)
 	}
+	if dm != nil {
+		if err := dm.declare(w, time.Now()); err != nil {
+			fatalf("%v", err)
+		}
+		l.mon = dm
+		go online.Run(monIn, dm.out)
+		fmt.Fprintf(os.Stderr, "ktestd: contract %s (sha256 %.12s…), %d monitors live, window %v, watermark every %v\n",
+			dm.c.Name, dm.c.Hash, len(dm.c.Order), *monWindow, *watermark)
+	}
 	// Every instrument's control stream is declared now, with its kind, so a
 	// rack that has only just connected knows a scope from a supply before
 	// anyone has taken either one's lease.
@@ -696,6 +770,7 @@ func main() {
 	// and before the servers stop, so that they have time to.
 	hub.Close()
 	rackHub.Close()
+	subHub.Close()
 	shutdown(ctl)
 	if secure != nil {
 		shutdown(secure)
@@ -896,6 +971,8 @@ type daemon struct {
 	// results, written where every other record is written.
 	jobs  chan func(l *loop)
 	procs *procs
+
+	subHub *stream.Hub // /stream/sub
 }
 
 type reqKind int
@@ -1044,6 +1121,7 @@ type loop struct {
 	w   *tee
 	bw  *bufio.Writer
 	txc *can.Conn
+	rxc *can.Conn // the monitoring socket, which the receiver reads; the loop only asks it what is pending
 
 	bcm  *can.BCM // nil when the kernel has no CAN_BCM
 	bcmc <-chan can.BCMMsg
@@ -1067,6 +1145,8 @@ type loop struct {
 	seq   uint32
 	queue []pending // sent and not yet handed back, oldest first
 	tasks map[uint32]*task
+
+	mon *dutMon // -contract: the live monitors; nil without
 }
 
 // run is the loop. It returns how many sent frames were never handed back.
@@ -1075,8 +1155,25 @@ func (l *loop) run(rx, echo <-chan can.Frame, done <-chan struct{}, fail <-chan 
 	var drain <-chan time.Time
 	tick := time.NewTicker(200 * time.Millisecond)
 	defer tick.Stop()
+	// The monitors' clock is the loop's: a tick goes to them through the same
+	// queue as the records, so a loop that stalls stops the watermark rather
+	// than letting it run on past records still waiting to be written.
+	var monTick <-chan time.Time
+	var monOut <-chan monitor.Output
+	if l.mon != nil {
+		mt := time.NewTicker(l.mon.tick)
+		defer mt.Stop()
+		monTick, monOut = mt.C, l.mon.out
+	}
 
 	for {
+		if l.mon != nil && l.caughtUp(rx, echo) {
+			// Everything the sources had sent has been taken in, so a record
+			// stamped before now has been written: the monitors' clock may
+			// stand here. Behind a backlog it stays where it was, and the
+			// watermark with it, rather than running past what still waits.
+			l.mon.tap.SetClock(time.Now())
+		}
 		select {
 		case f := <-rx:
 			if err := l.w.Frame(&f); err != nil {
@@ -1109,6 +1206,15 @@ func (l *loop) run(rx, echo <-chan can.Frame, done <-chan struct{}, fail <-chan 
 
 		case j := <-l.d.jobs:
 			j(l)
+
+		case <-monTick:
+			if l.caughtUp(rx, echo) {
+				l.mon.tap.SetClock(time.Now())
+			}
+			l.mon.tap.Tick(l.mon.tap.Clock())
+
+		case o := <-monOut:
+			l.mon.write(l.w, o)
 
 		case <-tick.C:
 			l.expire(time.Now())
@@ -1160,6 +1266,18 @@ func (l *loop) run(rx, echo <-chan can.Frame, done <-chan struct{}, fail <-chan 
 			l.bcmEvent(m)
 		}
 	}
+}
+
+// caughtUp says whether the loop has taken in everything its sources have
+// handed over: nothing waits in their queues, nor in the sockets the bus is
+// read from. A frame in a socket is stamped already, by the kernel, and the
+// monitors may not be told that time has passed it (see dutMon). The sockets
+// matter after a pause, a collection or the scheduler's: frames go on
+// arriving and being stamped while the receivers cannot run, and the queues
+// look empty until they can.
+func (l *loop) caughtUp(rx, echo <-chan can.Frame) bool {
+	return len(rx) == 0 && len(echo) == 0 && len(l.events) == 0 && len(l.scopes) == 0 &&
+		!l.rxc.Pending() && !l.txc.Pending()
 }
 
 // handle takes one request through the control plane and, if it is admitted,
@@ -1685,6 +1803,7 @@ func (d *daemon) mux(hub, rackHub *stream.Hub) *http.ServeMux {
 	})
 	m.Handle("GET /stream/live", hub)
 	m.Handle("GET /stream/status", hub.StatusHandler())
+	m.Handle("GET /stream/sub", streamSub(d.subHub))
 	m.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "%s\n\n"+
 			"  POST   /bus/%[2]s/lease         take the bus's lease: {\"holder\": ..., \"ttl\": \"30s\"}\n"+
@@ -1709,6 +1828,8 @@ func (d *daemon) mux(hub, rackHub *stream.Hub) *http.ServeMux {
 			"  GET    /panel                    the rack's panel, its sha256 as the ETag\n"+
 			"  PUT    /panel                    save a panel, with If-Match: the ETag of the one it was edited from\n"+
 			"  GET    /stream/live              the recording, live, as Logb\n"+
+			"  GET    /stream/sub?ch=mon.*,...  the named streams, record by record; mon.watermark, mon.gap\n"+
+			"                                   and mode.* always\n"+
 			"  GET    /stream/status            what the fan-out is doing\n\n"+
 			"Every request but lease and disarm carries the instrument's lease token as the %[3]s header.\n",
 			version, d.bus, leaseHeader)
@@ -1735,9 +1856,10 @@ func rack(ui, api http.Handler) http.Handler {
 }
 
 // readOnly is plain -http: the streams, and nothing that acts.
-func readOnly(hub, rackHub *stream.Hub) http.Handler {
+func readOnly(hub, rackHub, subHub *stream.Hub) http.Handler {
 	m := hub.Mux()
 	m.Handle("GET /stream/rack", rackHub)
+	m.Handle("GET /stream/sub", streamSub(subHub))
 	return m
 }
 

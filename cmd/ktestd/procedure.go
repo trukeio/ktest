@@ -79,6 +79,10 @@ type procs struct {
 	last *procRun
 
 	run, step, result *teeStream
+
+	// contract is the sha256 of the DUT contract the daemon runs, which every
+	// run records; "" for none.
+	contract string
 }
 
 // procRun is the run under way.
@@ -620,6 +624,7 @@ func (p *procs) record(l *loop, t time.Time, e procEvent) {
 			putStr(rec, prHash, 64, state.hash)
 		}
 		putStr(rec, prLibrary, 32, lib.Version)
+		putStr(rec, prContract, 64, p.contract)
 		putStr(rec, prMode, 16, "engineering")
 		putStr(rec, prWhere, 64, e.where)
 		putStr(rec, prMessage, 160, e.msg)

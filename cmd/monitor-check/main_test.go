@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"strings"
 	"testing"
@@ -222,4 +223,45 @@ func dutStates(t *testing.T, path string, epoch int64) (stopped, running []int64
 		}
 	}
 	return stopped, running
+}
+
+// The third fixture is ktestd running dutsim.json live, as a DUT rack, over
+// the same dip as the second (testdata/rack-live.logb). The rack recorded
+// its monitors' transitions and watermark; a replay of the records it read
+// gives the same transitions, to the nanosecond, which is what the purity of
+// §4.3 promises, held here across the whole online path: tap, reorder window,
+// evaluator and loop.
+func TestLiveIsReplay(t *testing.T) {
+	r, err := check("testdata/dutsim.json", "testdata/rack-live.logb", "mode.applied")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r.haveLive || r.liveWM == 0 || r.firstGap != math.MaxInt64 {
+		t.Fatalf("live %v, watermark %d, first gap %d: want a gapless recording with a watermark", r.haveLive, r.liveWM, r.firstGap)
+	}
+	if fails := compareLive(r); len(fails) > 0 {
+		t.Fatalf("the rack and the replay disagree:\n%s", strings.Join(fails, "\n"))
+	}
+	n := 0
+	for _, x := range r.live {
+		if x.T <= r.liveWM {
+			n++
+		}
+	}
+	if n < 10 {
+		t.Fatalf("only %d live transitions compared", n)
+	}
+	// One nanosecond out is a disagreement.
+	r.live[len(r.live)/2].T++
+	if fails := compareLive(r); len(fails) == 0 {
+		t.Fatal("a transition moved by a nanosecond went unnoticed")
+	}
+	// A recording made by no rack has nothing to compare.
+	plain, err := check("testdata/dutsim.json", "testdata/dutsim-dip.logb", "mode.applied")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fails := compareLive(plain); len(fails) != 1 || !strings.Contains(fails[0], "no mon.* streams") {
+		t.Fatalf("got %v", fails)
+	}
 }

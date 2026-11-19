@@ -272,6 +272,25 @@ func (c *Conn) RcvBuf() int {
 	return n
 }
 
+// Pending says whether the socket holds a frame not yet received: a poll
+// with no timeout. It is how a reader that stamps by the kernel's clock knows
+// it has taken in every frame stamped so far, and so may let time pass them;
+// a frame that has arrived and waits in the socket is stamped already.
+// SIOCINQ would say how much, and AF_CAN does not answer it (measured: ENOTTY
+// on vcan); whether is all that is needed.
+func (c *Conn) Pending() bool {
+	p := []unix.PollFd{{Fd: int32(c.fd), Events: unix.POLLIN}}
+	for {
+		n, err := unix.Poll(p, 0)
+		if err == unix.EINTR {
+			continue
+		}
+		// A poll that fails says nothing, and nothing is taken as pending,
+		// which holds time back: the safe side.
+		return err != nil || n > 0 && p[0].Revents&unix.POLLIN != 0
+	}
+}
+
 // Interrupts is how many blocking receives were interrupted and retried.
 func (c *Conn) Interrupts() uint64 { return c.eintrs }
 

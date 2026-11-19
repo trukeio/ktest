@@ -48,6 +48,7 @@ import (
 	"math"
 	"math/bits"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -137,6 +138,14 @@ type Config struct {
 	// a recorder that also sends. One that cannot transmit leaves it false, and
 	// its recording does not claim streams it could never fill.
 	TX bool
+
+	// Live says the recording is a stream served to readers as it is written
+	// and never kept as a file, such as the rack's stream or /stream/sub. It
+	// keeps no index: logb's writer would otherwise hold an entry for every
+	// DATA frame for as long as the stream runs, and one that writes a frame
+	// per record would grow by an entry a record without end. A live stream
+	// has no Path.
+	Live bool
 
 	// Now is the clock, injectable so that a test can write a deterministic
 	// file. It supplies the recording's epoch and the timestamp of any frame
@@ -272,6 +281,9 @@ func New(w io.Writer, cfg Config) (*Writer, error) {
 
 	var lw writer
 	var rec *index.Recorder
+	if cfg.Live && cfg.Path != "" {
+		return nil, fmt.Errorf("record: a live stream is never a file, and %s is one", cfg.Path)
+	}
 	if cfg.Path != "" {
 		r, err := index.NewRecorder(w, cfg.Path)
 		if err != nil {
@@ -284,7 +296,7 @@ func New(w io.Writer, cfg Config) (*Writer, error) {
 		if err != nil {
 			return nil, err
 		}
-		p.Codec, p.Filter = cfg.Codec, cfg.Filter
+		p.Codec, p.Filter, p.NoIndex = cfg.Codec, cfg.Filter, cfg.Live
 		lw = p
 	}
 
@@ -311,6 +323,14 @@ func New(w io.Writer, cfg Config) (*Writer, error) {
 		}
 	}
 	if err := lw.WriteMeta("timestamp.source", cfg.Stamp.String()); err != nil {
+		return nil, err
+	}
+	// Every time axis here counts from the epoch, and a reader that is to put
+	// a record next to anything outside the recording — a simulator's
+	// transcript, another rack's clock — needs it stated, not inferred from a
+	// segment's wall time, which Logb calls a hint. Each writer has its own:
+	// the recording and the streams the daemon serves are not one writer.
+	if err := lw.WriteMeta("recording.epoch", strconv.FormatInt(now.UnixNano(), 10)); err != nil {
 		return nil, err
 	}
 	for _, name := range slices.Sorted(maps.Keys(cfg.Attach)) {
@@ -876,14 +896,29 @@ func (w *Writer) offset(t time.Time) int64 {
 	return t.Sub(w.epoch).Nanoseconds() - w.segBase
 }
 
+// DecodedSchema is the stream a recording of db on bus declares for message m
+// when it first sees it: the layout its records will have. The daemon resolves
+// a DUT contract's inputs against these before the bus has carried anything,
+// since a decoded stream is declared lazily and the contract is checked at
+// start. Only the layout is promised; the stream's UUID depends on the
+// recording, and warnings are the recorder's to give.
+func DecodedSchema(bus string, db *dbc.File, m *dbc.Message) (*logb.Schema, error) {
+	return decodedSchema(bus, db, m, 0, nil)
+}
+
+func decodedSchema(bus string, db *dbc.File, m *dbc.Message, epoch int64,
+	warn func(string, ...any)) (*logb.Schema, error) {
+	return dbc.Schema(m, dbc.SchemaOptions{
+		Namespace: fmt.Sprintf("ktest/%s/%d", bus, epoch),
+		Database:  db.Name,
+		AxisExp:   axisExp,
+		Warn:      warn,
+	})
+}
+
 // addDecoded declares a message's stream the first time it is seen.
 func (w *Writer) addDecoded(m *dbc.Message) (*stream, error) {
-	s, err := dbc.Schema(m, dbc.SchemaOptions{
-		Namespace: fmt.Sprintf("ktest/%s/%d", w.cfg.Bus, w.epoch.UnixNano()),
-		Database:  w.cfg.DB.Name,
-		AxisExp:   axisExp,
-		Warn:      w.cfg.Warn,
-	})
+	s, err := decodedSchema(w.cfg.Bus, w.cfg.DB, m, w.epoch.UnixNano(), w.cfg.Warn)
 	if err != nil {
 		return nil, err
 	}
