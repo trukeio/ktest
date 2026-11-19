@@ -38,5 +38,20 @@ The rack is also its own editor:
 `rack.json` is made from `panel.json` on the first run and kept after it; delete
 it to go back to the original.
 
+The daemon also runs procedures, from `procedures/`. `ramp.robot` ramps
+channel 1 through 2, 4, 6 and 8 V, checks at each level that the terminals
+measure what was set, and records each step:
+
+    K="curl -s --cacert $HOME/.local/state/ktestd/tls-cert.pem -H \"Authorization: Bearer $(cat token)\""
+    eval $K -d "'{\"file\":\"ramp.robot\",\"test\":\"Ramp\"}'" https://localhost:8443/procedures/run
+    eval $K -X DELETE https://localhost:8443/procedures/run     # stop it
+
+- **Ramp** takes psu1's lease and arms it for you, runs, and releases it. Your
+  browser must not hold psu1's lease meanwhile, or the run is refused.
+- **Over The Limit** asks for 14 V; `limits.json` caps channel 1 at 12 V, so
+  the run fails as refused, and its teardown still switches the output off.
+- The run carries on if the client disconnects. Every keyword call is in
+  `procedure.step`, every result in `procedure.result`.
+
 Afterwards, `logbcheck -control demo.logb /dev/null` checks every decision in the
-recording against the limits it declares.
+recording against the limits it declares, the procedure's included.

@@ -195,7 +195,7 @@ func TestControlCheckSupply(t *testing.T) {
 		{"a stop that left an output on", func(r *recording) { r.psu["psu1.ch1"][5].t = 2.5 }, "not off within"},
 		{"an output switched off by a lease release", func(r *recording) {
 			r.psu["psu1.ch1"] = append(r.psu["psu1.ch1"], psuRec{t: 2.001, seq: 7, event: psOff, connected: true})
-		}, "no disarm or stop"},
+		}, "no disarm, stop or rule"},
 		{"a write the control plane never accepted", func(r *recording) { r.psu["psu1.ch1"][2].seq = 4 }, "accepted no write"},
 		{"an accepted write never requested", func(r *recording) { r.psu["psu1.ch1"][1].seq = 0 }, "never recorded as requested"},
 		{"a stop missing from the bus", func(r *recording) { r.control[0].seq = 9 }, "not for"},
@@ -316,5 +316,129 @@ func checkPlanted(t *testing.T, good func() *recording, mutate func(*recording),
 		t.Fatalf("the check passed a recording with %s", name)
 	case want != "" && !strings.Contains(err.Error(), want):
 		t.Fatalf("the check failed, but not for the planted fault %q:\n%v", want, err)
+	}
+}
+
+// TestControlCheckDUT is the same exercise for a DUT rack: a mode change and
+// an action under dut's lease and arming; the action's own requests on the
+// bus, admitted by dut's arming and not the bus's lease; dut armed still when
+// its lease lapses, and the DUT rack's task running on through it and through
+// the bus's lease lapsing; and that task stopped by dut's disarm.
+func TestControlCheckDUT(t *testing.T) {
+	good := func() *recording {
+		return &recording{
+			meta: map[string]string{
+				"limits.cyclic.min_period": "1ms",
+				"auth.identities":          "master:operate, dash:view",
+			},
+			control: []ctlRec{
+				// A client's task, on the bus's own lease.
+				{t: 0.0, seq: 1, request: rqLeaseTake, leased: true, ttl: 1, holder: "x"},
+				{t: 0.1, seq: 2, request: rqArm, armed: true, leased: true, ttl: 1, holder: "x"},
+				{t: 0.2, seq: 3, request: rqCyclicSet, period: 0.01, armed: true, leased: true, ttl: 1, holder: "x"},
+				// The action's task, while the bus is the client's.
+				{t: 0.6, seq: 7, request: rqCyclicSet, period: 0.1, armed: true, leased: true, ttl: 1, holder: "x",
+					by: "master", via: viaAction},
+				// The bus lease lapses: the client's task stops, the action's runs on.
+				{t: 1.0, request: rqLeaseExpired},
+				{t: 3.0, seq: 9, request: rqSend, by: "master", via: viaAction},
+			},
+			controls: map[string][]ctlRec{dutInst: {
+				{t: 0.3, seq: 4, request: rqLeaseTake, leased: true, ttl: 2, holder: "master", by: "master", via: viaTLS},
+				{t: 0.4, seq: 5, request: rqArm, armed: true, leased: true, ttl: 2, holder: "master", by: "master", via: viaTLS},
+				{t: 0.5, seq: 6, request: rqMode, armed: true, leased: true, ttl: 2, holder: "master", by: "master",
+					via: viaTLS, channel: "active"},
+				{t: 0.7, seq: 8, request: rqAction, verdict: vBusy, armed: true, leased: true, ttl: 2, holder: "master",
+					by: "master", via: viaTLS, channel: "reset"},
+				// The dut lease lapses, and dut stays armed.
+				{t: 2.3, request: rqLeaseExpired, armed: true},
+				{t: 4.0, seq: 10, request: rqDisarm, by: "dash", via: viaTLS},
+			}},
+			cyclic: map[string][]cycRec{
+				"400": {
+					{t: 0.2, seq: 3, event: evStart, active: true},
+					{t: 1.001, event: evDisarmed},
+				},
+				"701": {
+					{t: 0.6, seq: 7, event: evStart, active: true},
+					{t: 4.001, seq: 10, event: evDisarmed},
+				},
+			},
+			tasks: []string{"400", "701"},
+		}
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(r *recording)
+		want   string
+	}{
+		{"a DUT rack that keeps to its rules", func(r *recording) {}, ""},
+		{"an action's send while the DUT was not armed", func(r *recording) {
+			r.control[5].t = 4.5
+		}, "while the DUT was not armed"},
+		{"a mode change accepted without the lease", func(r *recording) {
+			r.controls[dutInst][2].leased = false
+		}, "mode change accepted without a lease"},
+		{"an action's send after the DUT's lease lapsed and disarmed it", func(r *recording) {
+			r.controls[dutInst][4].armed = false
+			r.cyclic["701"][1].t = 2.301
+			r.cyclic["701"][1].seq = 0
+		}, "seq 9: a DUT action's send accepted while the DUT was not armed"},
+		{"a client's task left running by its lease lapsing", func(r *recording) {
+			r.cyclic["400"][1].t = 1.5
+		}, "not stopped"},
+		{"the DUT rack's task stopped by the bus lease lapsing", func(r *recording) {
+			r.cyclic["701"][1] = cycRec{t: 1.001, event: evDisarmed}
+		}, "which was not its own"},
+		{"the DUT rack's task left running by dut's disarm", func(r *recording) {
+			r.cyclic["701"][1].t = 4.5
+		}, "not stopped"},
+		{"the DUT rack's task running while the DUT was disarmed", func(r *recording) {
+			r.cyclic["701"] = append(r.cyclic["701"], cycRec{t: 4.6, seq: 11, event: evStart, active: true})
+			r.control = append(r.control, ctlRec{t: 4.6, seq: 11, request: rqCyclicSet, period: 0.1, by: "master", via: viaAction})
+		}, "while the DUT was not armed"},
+		{"an action asked for by a view name", func(r *recording) {
+			r.controls[dutInst][2].by = "dash"
+		}, "whose role is view"},
+	} {
+		t.Run(tc.name, func(t *testing.T) { checkPlanted(t, good, tc.mutate, tc.name, tc.want) })
+	}
+}
+
+// TestControlCheckRule: a daemon rule removing the stress is a disarm with the
+// outputs off, under one number, by nobody: the supply must be off after it,
+// and disarmed.
+func TestControlCheckRule(t *testing.T) {
+	good := func() *recording {
+		return &recording{
+			meta: map[string]string{
+				"limits.cyclic.min_period": "1ms", "psu.psu1.channels": "1",
+				"limits.psu1.ch1.v_max": "12", "limits.psu1.ch1.i_max": "none", "limits.psu1.ch1.out_max": "none",
+			},
+			control: []ctlRec{{t: 0, request: rqShutdown}},
+			controls: map[string][]ctlRec{"psu1": {
+				{t: 0.0, seq: 1, request: rqLeaseTake, leased: true, ttl: 10},
+				{t: 0.1, seq: 2, request: rqArm, armed: true, leased: true, ttl: 10},
+				{t: 0.4, seq: 3, request: rqChannelSet, armed: true, leased: true, ttl: 10, channel: "psu1.ch1.out.set", value: 1},
+				{t: 1.0, seq: 4, request: rqRule, leased: true, ttl: 10, channel: "monitoring_lost"},
+			}},
+			psu: map[string][]psuRec{"psu1.ch1": {
+				{t: 0.0, event: psConnected, connected: true},
+				{t: 0.4, seq: 3, event: psRequested, connected: true},
+				{t: 0.401, seq: 3, event: psApplied, connected: true, outApplied: true},
+				{t: 1.002, seq: 4, event: psOff, connected: true},
+			}},
+		}
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(r *recording)
+		want   string
+	}{
+		{"a rule that switched the supply off", func(r *recording) {}, ""},
+		{"a rule that left the output on", func(r *recording) { r.psu["psu1.ch1"][3].t = 3 }, "not off within"},
+		{"a rule that left the supply armed", func(r *recording) { r.controls["psu1"][3].armed = true }, "still armed after a rule"},
+	} {
+		t.Run(tc.name, func(t *testing.T) { checkPlanted(t, good, tc.mutate, tc.name, tc.want) })
 	}
 }

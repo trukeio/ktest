@@ -11,7 +11,8 @@ import (
 	"github.com/rveen/ktest/record"
 )
 
-// tee writes every record twice: to the recording, and to the rack's stream.
+// tee writes every record three times: to the recording, to the rack's
+// stream, and to the subscription stream.
 //
 // The rack's stream is the same records, uncompressed, for a browser to decode
 // as they arrive (§10.3) without carrying a zstd decoder. It is a second writer
@@ -19,33 +20,40 @@ import (
 // Logb stream on its own, and it is where §10.4's decimation will go: the disk
 // keeps full rate, the browser gets what it can draw. Only the loop touches
 // either writer, as it would one.
+//
+// The subscription stream, /stream/sub, is the third (§4.4): the same records
+// again, uncompressed, each in a DATA frame of its own written the moment the
+// record is, for a peer that reacts to them. It carries no waveforms; a
+// waveform is the rack's to draw and the file's to keep, and a peer judges
+// the DUT by its monitors.
 type tee struct {
-	file, rack *record.Writer
+	file, rack, sub *record.Writer
 }
 
 func (t *tee) Frame(f *can.Frame) error {
-	return both(t.file.Frame(f), t.rack.Frame(f))
+	return both(t.file.Frame(f), t.rack.Frame(f), t.sub.Frame(f))
 }
 
 func (t *tee) Requested(seq uint32, f *can.Frame, at time.Time, sendErr error) error {
-	return both(t.file.Requested(seq, f, at, sendErr), t.rack.Requested(seq, f, at, sendErr))
+	return both(t.file.Requested(seq, f, at, sendErr), t.rack.Requested(seq, f, at, sendErr),
+		t.sub.Requested(seq, f, at, sendErr))
 }
 
 func (t *tee) Applied(seq uint32, f *can.Frame) error {
-	return both(t.file.Applied(seq, f), t.rack.Applied(seq, f))
+	return both(t.file.Applied(seq, f), t.rack.Applied(seq, f), t.sub.Applied(seq, f))
 }
 
 func (t *tee) Cyclic(at time.Time, c *record.Cyclic) error {
-	return both(t.file.Cyclic(at, c), t.rack.Cyclic(at, c))
+	return both(t.file.Cyclic(at, c), t.rack.Cyclic(at, c), t.sub.Cyclic(at, c))
 }
 
 func (t *tee) Control(at time.Time, c *record.Control) error {
-	return both(t.file.Control(at, c), t.rack.Control(at, c))
+	return both(t.file.Control(at, c), t.rack.Control(at, c), t.sub.Control(at, c))
 }
 
 // A teeStream is one stream the daemon lays out itself, in both writers.
 type teeStream struct {
-	file, rack *record.Stream
+	file, rack, sub *record.Stream
 }
 
 // NewStream declares the stream mk makes in both writers, each with its own
@@ -59,11 +67,15 @@ func (t *tee) NewStream(mk func() *logb.Schema) (*teeStream, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &teeStream{f, r}, nil
+	sb, err := t.sub.NewStream(mk())
+	if err != nil {
+		return nil, err
+	}
+	return &teeStream{f, r, sb}, nil
 }
 
 func (t *tee) Write(at time.Time, s *teeStream, fill func(rec []byte)) error {
-	return both(t.file.Write(at, s.file, fill), t.rack.Write(at, s.rack, fill))
+	return both(t.file.Write(at, s.file, fill), t.rack.Write(at, s.rack, fill), t.sub.Write(at, s.sub, fill))
 }
 
 // A teeWave is one waveform stream, in whichever writers carry it. Either half
@@ -131,28 +143,32 @@ func (t *tee) EndAcq(runID uint32, toRack bool) {
 }
 
 func (t *tee) DeclareControl(instrument, kind string) error {
-	return both(t.file.DeclareControl(instrument, kind), t.rack.DeclareControl(instrument, kind))
+	return both(t.file.DeclareControl(instrument, kind), t.rack.DeclareControl(instrument, kind),
+		t.sub.DeclareControl(instrument, kind))
 }
 
 func (t *tee) Meta(key, value string) error {
-	return both(t.file.Meta(key, value), t.rack.Meta(key, value))
+	return both(t.file.Meta(key, value), t.rack.Meta(key, value), t.sub.Meta(key, value))
 }
 
 func (t *tee) Attach(name string, data []byte) error {
-	return both(t.file.Attach(name, data), t.rack.Attach(name, data))
+	return both(t.file.Attach(name, data), t.rack.Attach(name, data), t.sub.Attach(name, data))
 }
 
-func (t *tee) Flush() error { return both(t.file.Flush(), t.rack.Flush()) }
-func (t *tee) Close() error { return both(t.file.Close(), t.rack.Close()) }
+func (t *tee) Flush() error { return both(t.file.Flush(), t.rack.Flush(), t.sub.Flush()) }
+func (t *tee) Close() error { return both(t.file.Close(), t.rack.Close(), t.sub.Close()) }
 
 // Stats and SaveIndex are the recording's: the rack's stream is a view of it,
 // and has no file to index.
 func (t *tee) Stats() record.Stats      { return t.file.Stats() }
 func (t *tee) SaveIndex() (bool, error) { return t.file.SaveIndex() }
 
-func both(a, b error) error {
-	if a != nil {
-		return a
+// both is the first error of several writes, each of which has been made.
+func both(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			return err
+		}
 	}
-	return b
+	return nil
 }

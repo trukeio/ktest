@@ -48,6 +48,7 @@ import (
 	"math"
 	"math/bits"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -138,6 +139,14 @@ type Config struct {
 	// its recording does not claim streams it could never fill.
 	TX bool
 
+	// Live says the recording is a stream served to readers as it is written
+	// and never kept as a file, such as the rack's stream or /stream/sub. It
+	// keeps no index: logb's writer would otherwise hold an entry for every
+	// DATA frame for as long as the stream runs, and one that writes a frame
+	// per record would grow by an entry a record without end. A live stream
+	// has no Path.
+	Live bool
+
 	// Now is the clock, injectable so that a test can write a deterministic
 	// file. It supplies the recording's epoch and the timestamp of any frame
 	// the kernel did not stamp.
@@ -145,6 +154,30 @@ type Config struct {
 
 	// Warn, if set, is told about anything that could not be carried across.
 	Warn func(format string, a ...any)
+
+	// OnStream and OnRecord, if set, see every stream as it is declared and
+	// every record as it is written, before anything is encoded: the daemon's
+	// internal subscription, by which a procedure's conditions read the
+	// channels' latest values. They are called on the writer's goroutine and
+	// must not block it. rec belongs to the writer; a consumer that keeps it
+	// copies it. Waveform samples do not pass through OnRecord: they are not
+	// values a condition reads.
+	OnStream func(s *logb.Schema)
+	OnRecord func(s *logb.Schema, t time.Time, rec []byte)
+}
+
+// hooked is a writer that tells Config.OnStream of each stream it declares.
+type hooked struct {
+	writer
+	on func(*logb.Schema)
+}
+
+func (h hooked) AddStream(s *logb.Schema) error {
+	if err := h.writer.AddStream(s); err != nil {
+		return err
+	}
+	h.on(s)
+	return nil
 }
 
 const (
@@ -248,6 +281,9 @@ func New(w io.Writer, cfg Config) (*Writer, error) {
 
 	var lw writer
 	var rec *index.Recorder
+	if cfg.Live && cfg.Path != "" {
+		return nil, fmt.Errorf("record: a live stream is never a file, and %s is one", cfg.Path)
+	}
 	if cfg.Path != "" {
 		r, err := index.NewRecorder(w, cfg.Path)
 		if err != nil {
@@ -260,10 +296,13 @@ func New(w io.Writer, cfg Config) (*Writer, error) {
 		if err != nil {
 			return nil, err
 		}
-		p.Codec, p.Filter = cfg.Codec, cfg.Filter
+		p.Codec, p.Filter, p.NoIndex = cfg.Codec, cfg.Filter, cfg.Live
 		lw = p
 	}
 
+	if cfg.OnStream != nil {
+		lw = hooked{lw, cfg.OnStream}
+	}
 	now := cfg.Now()
 	rw := &Writer{
 		w:        lw,
@@ -284,6 +323,14 @@ func New(w io.Writer, cfg Config) (*Writer, error) {
 		}
 	}
 	if err := lw.WriteMeta("timestamp.source", cfg.Stamp.String()); err != nil {
+		return nil, err
+	}
+	// Every time axis here counts from the epoch, and a reader that is to put
+	// a record next to anything outside the recording — a simulator's
+	// transcript, another rack's clock — needs it stated, not inferred from a
+	// segment's wall time, which Logb calls a hint. Each writer has its own:
+	// the recording and the streams the daemon serves are not one writer.
+	if err := lw.WriteMeta("recording.epoch", strconv.FormatInt(now.UnixNano(), 10)); err != nil {
 		return nil, err
 	}
 	for _, name := range slices.Sorted(maps.Keys(cfg.Attach)) {
@@ -679,6 +726,12 @@ const (
 	ControlShutdown     ControlRequest = 10 // the daemon, as it stopped
 	ControlChannelSet   ControlRequest = 11 // a write to an instrument's channel
 	ControlStop         ControlRequest = 12 // every instrument disarmed at once: the rack's stop
+	ControlMode         ControlRequest = 13 // a DUT mode change; Channel names the mode
+	ControlAction       ControlRequest = 14 // a DUT action; Channel names it
+	// ControlRule is a daemon rule removing the stress (limits.json's rules):
+	// the instrument disarmed, its outputs off, as the stop does; Channel
+	// names the rule.
+	ControlRule ControlRequest = 15
 )
 
 // ControlVerdict is the control plane's answer, given before anything reaches
@@ -693,6 +746,7 @@ const (
 	VerdictBelowFloor ControlVerdict = 4 // a cyclic period below the limits' floor
 	VerdictForbidden  ControlVerdict = 5 // the caller's role does not permit the request
 	VerdictAboveLimit ControlVerdict = 6 // a channel write beyond the limit set for the channel
+	VerdictBusy       ControlVerdict = 7 // a DUT mode change or action while another action is under way
 )
 
 // Via is the listener a request arrived through.
@@ -702,6 +756,14 @@ const (
 	ViaDaemon Via = 0 // nobody asked: the daemon acted on its own
 	ViaUnix   Via = 1 // the local socket, trusted as its file permissions are
 	ViaTLS    Via = 2 // the network listener, TLS with a named token
+	// ViaProcedure is a procedure run, acting for whoever started it: By is
+	// their name, and they started it through one of the listeners above.
+	ViaProcedure Via = 3
+	// ViaAction is a DUT action, run by the DUT rack for whoever asked for it
+	// (By): a keyword of the contract's resource. It is admitted while the
+	// DUT instrument is armed, not under the lease of the instrument it acts
+	// on, which a client may hold or not; limits apply as to anyone.
+	ViaAction Via = 4
 )
 
 // A Control is one decision of the control plane.
@@ -846,14 +908,29 @@ func (w *Writer) offset(t time.Time) int64 {
 	return t.Sub(w.epoch).Nanoseconds() - w.segBase
 }
 
+// DecodedSchema is the stream a recording of db on bus declares for message m
+// when it first sees it: the layout its records will have. The daemon resolves
+// a DUT contract's inputs against these before the bus has carried anything,
+// since a decoded stream is declared lazily and the contract is checked at
+// start. Only the layout is promised; the stream's UUID depends on the
+// recording, and warnings are the recorder's to give.
+func DecodedSchema(bus string, db *dbc.File, m *dbc.Message) (*logb.Schema, error) {
+	return decodedSchema(bus, db, m, 0, nil)
+}
+
+func decodedSchema(bus string, db *dbc.File, m *dbc.Message, epoch int64,
+	warn func(string, ...any)) (*logb.Schema, error) {
+	return dbc.Schema(m, dbc.SchemaOptions{
+		Namespace: fmt.Sprintf("ktest/%s/%d", bus, epoch),
+		Database:  db.Name,
+		AxisExp:   axisExp,
+		Warn:      warn,
+	})
+}
+
 // addDecoded declares a message's stream the first time it is seen.
 func (w *Writer) addDecoded(m *dbc.Message) (*stream, error) {
-	s, err := dbc.Schema(m, dbc.SchemaOptions{
-		Namespace: fmt.Sprintf("ktest/%s/%d", w.cfg.Bus, w.epoch.UnixNano()),
-		Database:  w.cfg.DB.Name,
-		AxisExp:   axisExp,
-		Warn:      w.cfg.Warn,
-	})
+	s, err := decodedSchema(w.cfg.Bus, w.cfg.DB, m, w.epoch.UnixNano(), w.cfg.Warn)
 	if err != nil {
 		return nil, err
 	}
@@ -881,6 +958,11 @@ func (w *Writer) rotate(t time.Time) error {
 }
 
 func (w *Writer) maybeFlush(st *stream) error {
+	if w.cfg.OnRecord != nil && st.n > 0 {
+		rec := st.buf[len(st.buf)-st.s.RecordBytes():]
+		off := int64(binary.LittleEndian.Uint64(rec))
+		w.cfg.OnRecord(st.s, w.epoch.Add(time.Duration(w.segBase+off)), rec)
+	}
 	if int(st.n) < w.cfg.PerFrame {
 		return nil
 	}
@@ -1270,10 +1352,11 @@ func controlSchema(instrument, kind string) *logb.Schema {
 				numField("can_id", ctlCanID, 32, "", "the identifier a send or cyclic request named; 0 for other requests"),
 				numField("request", ctlRequest, 8, "", "1 send, 2 cyclic set, 3 cyclic delete, 4 arm, 5 disarm, "+
 					"6 lease take, 7 lease renew, 8 lease release, 9 lease expired, 10 shutdown, 11 channel set, "+
-					"12 stop: every instrument disarmed at once, under one seq"),
+					"12 stop: every instrument disarmed at once, under one seq; 13 a DUT mode change, 14 a DUT action; "+
+					"15 a daemon rule removed the stress, the rule in channel"),
 				numField("verdict", ctlVerdict, 8, "", "0 accepted; refused: 1 not armed, 2 without the lease, "+
 					"3 the lease is held by another, 4 a cyclic period below the floor, 5 the caller's role does not permit it, "+
-					"6 a channel write above the channel's limit"),
+					"6 a channel write above the channel's limit, 7 a DUT action is already under way"),
 			},
 			flagFields(8*ctlFlags, "extended", "fd", "brs"),
 			held(
@@ -1294,9 +1377,10 @@ func controlSchema(instrument, kind string) *logb.Schema {
 			[]logb.Field{
 				{Name: "by", BitOffset: 8 * ctlBy, BitWidth: 8 * HolderMax, Type: logb.TypeString,
 					Desc: "the authenticated name that made the request; empty on the local socket and for what the daemon did unasked"},
-				numField("via", ctlVia, 8, "", "0 the daemon, unasked; 1 the local socket; 2 the network listener, TLS with a named token"),
+				numField("via", ctlVia, 8, "", "0 the daemon, unasked; 1 the local socket; 2 the network listener, TLS with a named token; "+
+					"3 a procedure run, for the name in by; 4 a DUT action, for the name in by"),
 				{Name: "channel", BitOffset: 8 * ctlChannel, BitWidth: 8 * HolderMax, Type: logb.TypeString,
-					Desc: "the channel a write named; empty for other requests"},
+					Desc: "the channel a write named, the mode a mode change named, the action an action named; empty for other requests"},
 				{Name: "value", BitOffset: 8 * ctlValue, BitWidth: 64, Type: logb.TypeFloat,
 					Desc: "the value a write asked for, whatever the verdict; 0 for other requests"},
 			},

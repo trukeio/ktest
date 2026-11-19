@@ -1,0 +1,10 @@
+{
+  "contract": "dutsim",
+  "schema": 1,
+  "inputs":   {"Vx": "psu1.ch1.meas.v", "Speed": "EngineData.EngineSpeed", "Alive": "DutStatus"},
+  "monitors": {
+    "vx":    {"ok": "Vx > 9V"},
+    "speed": {"ok": "abs(Speed - 3000) <= 30"},
+    "alive": {"ok": "age(Alive) < 30ms and delta(Alive.counter, 16) == 1"}
+  }
+}

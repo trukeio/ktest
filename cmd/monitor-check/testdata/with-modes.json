@@ -1,0 +1,7 @@
+{
+  "contract": "with-modes",
+  "schema": 1,
+  "inputs": {"Vx": "psu1.ch1.meas.v"},
+  "monitors": {"active": {"ok": "Vx < 7V", "modes": ["on"]}},
+  "modes": {"on": {"settle": "100ms"}}
+}

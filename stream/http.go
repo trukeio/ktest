@@ -40,7 +40,11 @@ const ContentType = "application/vnd.logb"
 // were curl, whose receive windows are large; a client with a small h2 window
 // is the case that would bite, and the one to measure if a consumer is ever
 // seen falling behind.
-func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) { h.ServeStreams(w, r, nil) }
+
+// ServeStreams is ServeHTTP for a consumer sent only the streams keep accepts,
+// by name: see SubscribeStreams.
+func (h *Hub) ServeStreams(w http.ResponseWriter, r *http.Request, keep func(stream string) bool) {
 	fl, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "the server cannot stream to this connection", http.StatusInternalServerError)
@@ -65,7 +69,7 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	fl.Flush()
 
-	sub := h.Subscribe(0)
+	sub := h.SubscribeStreams(0, keep)
 	defer sub.Cancel()
 
 	ctx := r.Context()

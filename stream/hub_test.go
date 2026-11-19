@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -362,5 +363,77 @@ func TestRoom(t *testing.T) {
 	h.Close()
 	if h.Room() != math.MaxInt {
 		t.Errorf("after the recording ended, Room is %d", h.Room())
+	}
+}
+
+// A subscriber that names streams gets a valid file with those streams and no
+// others, from the start or joining late, held values and all; one that
+// cannot keep up is dropped like any other, and disturbs nothing.
+func TestStreamFilter(t *testing.T) {
+	h := New()
+	var file bytes.Buffer
+	w := newWriter(t, io.MultiWriter(&file, h))
+	mon, raw := testSchema("mon.alive"), testSchema("vcan0.raw")
+	for _, s := range []*logb.Schema{mon, raw} {
+		if err := w.AddStream(s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	keep := func(name string) bool { return strings.HasPrefix(name, "mon.") }
+	early := h.SubscribeStreams(0, keep)
+	earlyDone := make(chan []byte, 1)
+	go func() { earlyDone <- collect(early) }()
+	slow := h.SubscribeStreams(64, keep)
+
+	var late *Sub
+	lateDone := make(chan []byte, 1)
+	for seg := 0; seg < 4; seg++ {
+		if err := w.BeginSegment(1_700_000_000_000_000_000 + int64(seg)*1e9); err != nil {
+			t.Fatal(err)
+		}
+		if seg == 0 {
+			if err := w.WriteMeta("bus", "vcan0"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, s := range []*logb.Schema{mon, raw} {
+			for i := 0; i < 10; i++ {
+				if err := w.WriteData(s, logb.TickVal(int64(seg)*1e9), 0, 1, rec(uint64(i), 12, uint32(i))); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		if err := w.SetHold(mon, logb.TickVal(int64(seg)*1e9), 0, []bool{false, true, false}, rec(0, 12, 0)); err != nil {
+			t.Fatal(err)
+		}
+		if seg == 1 {
+			late = h.SubscribeStreams(0, keep)
+			go func() { lateDone <- collect(late) }()
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	h.Close()
+
+	for _, c := range []struct {
+		name string
+		b    []byte
+		n    int
+	}{{"early", <-earlyDone, 40}, {"late", <-lateDone, 20}} {
+		streams, meta, _ := decode(t, c.b)
+		if streams["vcan0.raw"] != 0 || streams["mon.alive"] != c.n {
+			t.Errorf("%s subscriber got %v, want %d records of mon.alive and nothing else", c.name, streams, c.n)
+		}
+		if meta == 0 {
+			t.Errorf("%s subscriber got no metadata", c.name)
+		}
+	}
+	if err := slow.Err(); !errors.Is(err, ErrTooSlow) {
+		t.Errorf("the slow filtered subscriber ended with %v, want ErrTooSlow", err)
+	}
+	streams, _, _ := decode(t, file.Bytes())
+	if streams["vcan0.raw"] != 40 || streams["mon.alive"] != 40 {
+		t.Errorf("the recording holds %v, want 40 of each", streams)
 	}
 }

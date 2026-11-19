@@ -110,6 +110,11 @@ type Hub struct {
 	// atHeader is true until the file header has been consumed.
 	atHeader bool
 
+	// names is the current segment's streams by id, for subscribers that
+	// keep only some of them. Ids are segment-scoped (§6.6), so it is reset
+	// at every SYNC with the restatements.
+	names map[uint16]string
+
 	subs  map[*Sub]struct{}
 	stats Stats
 }
@@ -128,6 +133,7 @@ func New() *Hub {
 	return &Hub{
 		subs:     map[*Sub]struct{}{},
 		atHeader: true,
+		names:    map[uint16]string{},
 	}
 }
 
@@ -168,6 +174,14 @@ func (h *Hub) Write(p []byte) (int, error) {
 		if len(h.part) < total {
 			break
 		}
+		if logb.FrameType(h.part[4]) == logb.FrameData && len(h.subs) == 0 {
+			// A record is kept for nobody: only the preamble outlives its
+			// moment, and with no one connected there is no one to send it
+			// to. Copying it anyway costs a busy bus an allocation a frame.
+			h.part = h.part[total:]
+			h.stats.Frames++
+			continue
+		}
 		frame := append([]byte(nil), h.part[:total]...)
 		h.part = h.part[total:]
 		h.onFrame(logb.FrameType(frame[4]), frame)
@@ -192,8 +206,13 @@ func (h *Hub) onFrame(t logb.FrameType, frame []byte) {
 		h.schemas = h.schemas[:0]
 		h.runs = h.runs[:0]
 		h.holds = h.holds[:0]
+		clear(h.names)
+		for s := range h.subs {
+			clear(s.kept)
+		}
 	case logb.FrameSchema:
 		h.schemas = append(h.schemas, frame)
+		h.names[streamID(frame)] = schemaName(frame)
 	case logb.FrameRun:
 		h.runs = append(h.runs, frame)
 	case logb.FrameHold:
@@ -204,8 +223,49 @@ func (h *Hub) onFrame(t logb.FrameType, frame []byte) {
 	h.stats.Frames++
 
 	for s := range h.subs {
-		h.send(s, frame)
+		if h.keeps(s, frame) {
+			h.send(s, frame)
+		}
 	}
+}
+
+// keeps says whether a subscriber is sent a frame. One that subscribed to
+// every stream is sent everything; one that named some is sent the schemas,
+// held values and records of those, and every frame that belongs to no
+// stream: the file's own, its metadata and attachments, segment boundaries.
+// Lock held.
+func (h *Hub) keeps(s *Sub, frame []byte) bool {
+	if s.keep == nil {
+		return true
+	}
+	switch logb.FrameType(frame[4]) {
+	case logb.FrameSchema, logb.FrameHold, logb.FrameData:
+	default:
+		return true
+	}
+	id := streamID(frame)
+	k, ok := s.kept[id]
+	if !ok {
+		k = s.keep(h.names[id])
+		s.kept[id] = k
+	}
+	return k
+}
+
+func streamID(frame []byte) uint16 { return binary.LittleEndian.Uint16(frame[6:8]) }
+
+// schemaName reads a SCHEMA frame's stream name: after the header and the
+// 16-byte UUID, a u32 length and the name.
+func schemaName(frame []byte) string {
+	p := frame[frameHdr : len(frame)-frameCRC]
+	if len(p) < 20 {
+		return ""
+	}
+	n := int(binary.LittleEndian.Uint32(p[16:20]))
+	if n > len(p)-20 {
+		return ""
+	}
+	return string(p[20 : 20+n])
 }
 
 // send queues one chunk for a subscriber, or disconnects it. Lock held.
@@ -275,7 +335,13 @@ func (h *Hub) Room() int {
 //
 // limit is how many bytes the consumer may fall behind by before it is
 // disconnected; zero takes DefaultBuffer.
-func (h *Hub) Subscribe(limit int) *Sub {
+func (h *Hub) Subscribe(limit int) *Sub { return h.SubscribeStreams(limit, nil) }
+
+// SubscribeStreams attaches a consumer that is sent only the streams keep
+// accepts, by name, preamble included, and every frame that belongs to no
+// stream. A nil keep takes every stream, as Subscribe does. keep is called
+// with the hub's lock held, and must not call back into it.
+func (h *Hub) SubscribeStreams(limit int, keep func(stream string) bool) *Sub {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -286,6 +352,8 @@ func (h *Hub) Subscribe(limit int) *Sub {
 		ch:    make(chan []byte, 1024),
 		limit: limit,
 		hub:   h,
+		keep:  keep,
+		kept:  map[uint16]bool{},
 	}
 	if h.closed {
 		s.closed, s.err = true, ErrClosed
@@ -304,13 +372,17 @@ func (h *Hub) Subscribe(limit int) *Sub {
 		pre = append(pre, f...)
 	}
 	for _, f := range h.schemas {
-		pre = append(pre, f...)
+		if h.keeps(s, f) {
+			pre = append(pre, f...)
+		}
 	}
 	for _, f := range h.runs {
 		pre = append(pre, f...)
 	}
 	for _, f := range h.holds {
-		pre = append(pre, f...)
+		if h.keeps(s, f) {
+			pre = append(pre, f...)
+		}
 	}
 	if len(pre) > 0 {
 		s.ch <- pre
@@ -351,6 +423,11 @@ type Sub struct {
 	hub   *Hub
 	ch    chan []byte
 	limit int
+
+	// keep chooses the streams, nil for all; kept is its answer by stream
+	// id for the current segment.
+	keep func(string) bool
+	kept map[uint16]bool
 
 	// Guarded by hub.mu.
 	queued int

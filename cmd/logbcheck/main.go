@@ -85,6 +85,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"encoding/hex"
 	"errors"
 	"flag"
@@ -116,6 +117,8 @@ func main() {
 		ctl     = flag.Bool("control", false, "also check the control streams against the limits the recording declares")
 		psuT    = flag.String("psu", "", "also check a supply against the transcript of what it was told: name=transcript.log")
 		scopeT  = flag.String("scope", "", "also check a scope against the simulator's own account of the run: name=transcript.log")
+		dutT    = flag.String("dutsim", "", "also check the procedure's step results against dutsim's transcript of what the DUT did")
+		judge   = flag.Bool("judgements", false, "also replay every judgement of the DUT's monitors from the mirrored states")
 	)
 	flag.Usage = usage
 	flag.Parse()
@@ -141,7 +144,7 @@ func main() {
 	if err := compare(rec.raw, want, *jitter, *verbose); err != nil {
 		fail(err)
 	}
-	fmt.Printf("logbcheck: %d frames match %s byte for byte, in order\n", len(want), flag.Arg(1))
+	fmt.Printf("logbcheck: %d frames match %s byte for byte, in timestamp order\n", len(want), flag.Arg(1))
 
 	if *tx != "" {
 		sent, err := readLog(*tx)
@@ -204,6 +207,22 @@ func main() {
 			"under the settings in force, with the axis the dialect's rule gives and the samples recovering "+
 			"byte for byte to the sha256 it recorded; every setting applied is the transcript's, and what "+
 			"the recording says the scope holds is what the simulator holds\n", n, name, path)
+	}
+	if *judge {
+		n, err := compareJudged(flag.Arg(0), *verbose)
+		if err != nil {
+			fail(err)
+		}
+		fmt.Printf("logbcheck: %d judgements of the DUT's monitors replay from the mirrored states, "+
+			"each to what the keyword was told\n", n)
+	}
+	if *dutT != "" {
+		n, err := compareDutsim(flag.Arg(0), *dutT, *verbose)
+		if err != nil {
+			fail(err)
+		}
+		fmt.Printf("logbcheck: %d step results the procedure recorded are what %s says the DUT did: "+
+			"each class, and each level passed or not\n", n, *dutT)
 	}
 }
 
@@ -402,6 +421,11 @@ const (
 	rqShutdown     = 10
 	rqChannelSet   = 11
 	rqStop         = 12
+	rqMode         = 13
+	rqAction       = 14
+	// rqRule is a daemon rule removing the stress: a disarm with the outputs
+	// off, as the stop's, for the instruments the rule names.
+	rqRule = 15
 
 	vAccepted   = 0
 	vNotArmed   = 1
@@ -410,22 +434,33 @@ const (
 	vBelowFloor = 4
 	vForbidden  = 5
 	vAboveLimit = 6
+	vBusy       = 7
 
 	viaTLS = 2
+
+	viaProcedure = 3
+	// viaAction is a DUT action's own request: admitted while the dut
+	// instrument is armed, not under the lease of the instrument it acts on.
+	viaAction = 4
+
+	// dutInst is the DUT rack's instrument, whose lease lapsing leaves it
+	// armed: the DUT goes on running when its master goes (decision 9).
+	dutInst = "dut"
 )
 
 // needsLease is the requests the control plane admits only from the lease's
 // holder.
 var needsLease = map[uint64]bool{
 	rqSend: true, rqCyclicSet: true, rqCyclicDelete: true, rqArm: true, rqLeaseRenew: true, rqLeaseRelease: true,
-	rqChannelSet: true,
+	rqChannelSet: true, rqMode: true, rqAction: true,
 }
 
 var requestNames = map[uint64]string{
 	rqSend: "send", rqCyclicSet: "cyclic set", rqCyclicDelete: "cyclic delete", rqArm: "arm",
 	rqDisarm: "disarm", rqLeaseTake: "lease take", rqLeaseRenew: "lease renewal",
 	rqLeaseRelease: "lease release", rqLeaseExpired: "lease expiry", rqShutdown: "shutdown",
-	rqChannelSet: "channel write", rqStop: "stop",
+	rqChannelSet: "channel write", rqStop: "stop", rqMode: "mode change", rqAction: "action",
+	rqRule: "rule",
 }
 
 // readLogb reads the bus stream, the transmit streams and the cyclic task
@@ -859,6 +894,18 @@ func compare(got, want []frame, jitter float64, verbose bool) error {
 		}
 	}
 
+	// Both accounts are put in the order of their timestamps, ties as they
+	// came. Two senders on one host can reach two receiving sockets in
+	// different orders — measured on vcan: a CAN_BCM task's frame and another
+	// process's, 10 µs apart, arrived in one order at the recorder and in the
+	// other at candump — while the kernel stamps a frame once, for every
+	// socket it reaches. Order of arrival is a fact about a socket; the stamp
+	// order is the bus's.
+	got = slices.Clone(got)
+	want = slices.Clone(want)
+	slices.SortStableFunc(got, func(a, b frame) int { return cmp.Compare(a.t, b.t) })
+	slices.SortStableFunc(want, func(a, b frame) int { return cmp.Compare(a.t, b.t) })
+
 	if len(got) != len(want) {
 		// Not fatal on its own: showing which frames differ says far more
 		// about why than the count does.
@@ -1207,6 +1254,34 @@ func compareControl(r *recording, verbose bool) (int, time.Duration, error) {
 		}
 		return r.control[i], true
 	}
+	// dutArmedAt is whether the DUT rack's instrument was armed at t, by its
+	// last decision at or before t: what admits a DUT action's requests.
+	dutArmedAt := func(t float64) bool {
+		cs := r.controls[dutInst]
+		i := sort.Search(len(cs), func(i int) bool { return cs[i].t > t }) - 1
+		return i >= 0 && cs[i].armed
+	}
+	// bySeq is every decision of the bus, by its number.
+	bySeq := map[uint32]ctlRec{}
+	for _, c := range r.control {
+		if c.seq != 0 {
+			bySeq[c.seq] = c
+		}
+	}
+	// internalAt says whether a task was the DUT rack's at t: whether the
+	// decision that last started or changed it before t was a DUT action's.
+	internalAt := func(evs []cycRec, t float64) bool {
+		internal := false
+		for _, e := range evs {
+			if e.t > t {
+				break
+			}
+			if e.event == evStart || e.event == evUpdate {
+				internal = bySeq[e.seq].via == viaAction
+			}
+		}
+		return internal
+	}
 	// runningBefore is whether a task was running just before t.
 	runningBefore := func(evs []cycRec, t float64) bool {
 		on := false
@@ -1273,7 +1348,12 @@ func compareControl(r *recording, verbose bool) (int, time.Duration, error) {
 			if c.verdict == vAccepted {
 				switch c.request {
 				case rqSend, rqCyclicSet, rqChannelSet:
-					if !c.armed || !c.leased {
+					switch {
+					case c.via == viaAction:
+						if !dutArmedAt(c.t) {
+							report("seq %d: a DUT action's %s accepted while the DUT was not armed", c.seq, name)
+						}
+					case !c.armed || !c.leased:
 						report("seq %d: a %s accepted %s", c.seq, name, state(c))
 					}
 					if c.request == rqChannelSet {
@@ -1288,11 +1368,21 @@ func compareControl(r *recording, verbose bool) (int, time.Duration, error) {
 					if c.request == rqCyclicSet && c.period < fl {
 						report("seq %d: a cyclic period of %gs accepted under a floor of %v", c.seq, c.period, floor)
 					}
+				case rqMode, rqAction:
+					if !c.armed || !c.leased {
+						report("seq %d: a %s accepted %s", c.seq, name, state(c))
+					}
 				case rqCyclicDelete, rqArm, rqLeaseTake, rqLeaseRenew:
-					if !c.leased {
+					if !c.leased && c.via != viaAction {
 						report("seq %d: a %s accepted, and nobody holds the lease after it", c.seq, name)
 					}
-				case rqDisarm, rqLeaseRelease, rqLeaseExpired, rqShutdown, rqStop:
+				case rqLeaseRelease, rqLeaseExpired:
+					// The DUT rack stays armed when its lease goes; anything
+					// else is disarmed with it.
+					if c.armed && inst != dutInst {
+						report("seq %d: %s is still armed after a %s", c.seq, what, name)
+					}
+				case rqDisarm, rqShutdown, rqStop, rqRule:
 					if c.armed {
 						report("seq %d: %s is still armed after a %s", c.seq, what, name)
 					}
@@ -1321,7 +1411,9 @@ func compareControl(r *recording, verbose bool) (int, time.Duration, error) {
 			// Over the network every request is by a name the recording lists,
 			// does only what that name's role allows, and — when it needs the
 			// lease — is made by the name that holds it.
-			if c.via == viaTLS {
+			// A procedure run acts for the name that started it, and is held
+			// to that name's role as the name itself would be.
+			if c.via == viaTLS || (c.via == viaProcedure || c.via == viaAction) && c.by != "" {
 				role, known := roles[c.by]
 				switch {
 				case !known:
@@ -1331,7 +1423,7 @@ func compareControl(r *recording, verbose bool) (int, time.Duration, error) {
 				case c.verdict == vForbidden && role == "operate":
 					report("seq %d: a %s refused as not permitted to %q, whose role is operate", c.seq, name, c.by)
 				}
-				if c.verdict == vAccepted && needsLease[c.request] && c.by != prevHolder {
+				if c.verdict == vAccepted && needsLease[c.request] && c.via != viaAction && c.by != prevHolder {
 					report("seq %d: a %s over TLS by %q, under a lease held by %q", c.seq, name, c.by, prevHolder)
 				}
 			} else if c.verdict == vForbidden {
@@ -1339,11 +1431,30 @@ func compareControl(r *recording, verbose bool) (int, time.Duration, error) {
 			}
 
 			// Everything running stops when the bus is disarmed, under the
-			// disarm's own number.
-			if bus && prevArmed && !c.armed {
+			// disarm's own number; but a lapsed or released bus lease leaves
+			// the DUT rack's tasks running. A disarm of the DUT rack, or the
+			// stop, ends the DUT rack's.
+			leaseGone := c.request == rqLeaseExpired || c.request == rqLeaseRelease
+			if bus && prevArmed && !c.armed || inst == dutInst && prevArmed && !c.armed {
 				for _, task := range r.tasks {
 					evs := r.cyclic[task]
 					if !runningBefore(evs, c.t) {
+						continue
+					}
+					internal := internalAt(evs, c.t)
+					if bus && internal && leaseGone {
+						// The DUT rack's task is not the lease holder's to
+						// lose, and must run on (C3).
+						for _, e := range evs {
+							if e.t >= c.t && e.t <= c.t+grace && !e.active && e.event == evDisarmed {
+								report("%s: the DUT rack's task stopped when a %s at %.3fs ended the bus's lease, "+
+									"which was not its own", task, name, c.t)
+								break
+							}
+						}
+						continue
+					}
+					if !bus && !internal {
 						continue
 					}
 					stopped := false
@@ -1368,7 +1479,7 @@ func compareControl(r *recording, verbose bool) (int, time.Duration, error) {
 			case c.request == rqLeaseRelease || c.request == rqLeaseExpired || c.request == rqShutdown:
 				leaseUntil = -1
 			}
-			if !bus && c.verdict == vAccepted && (c.request == rqDisarm || c.request == rqStop) {
+			if !bus && c.verdict == vAccepted && (c.request == rqDisarm || c.request == rqStop || c.request == rqRule) {
 				checkOff(r, inst, c, report)
 			}
 			prevArmed, prevHolder = c.armed, c.holder
@@ -1384,10 +1495,18 @@ func compareControl(r *recording, verbose bool) (int, time.Duration, error) {
 	checkPanelSaves(r, roles, report)
 	n += len(r.panel)
 
-	// And nothing runs while the bus is disarmed.
+	// And nothing runs while the bus is disarmed, or for the DUT rack's own
+	// tasks, while the DUT is.
 	for _, task := range r.tasks {
-		for _, e := range r.cyclic[task] {
+		evs := r.cyclic[task]
+		for _, e := range evs {
 			if !e.active {
+				continue
+			}
+			if internalAt(evs, e.t) {
+				if !dutArmedAt(e.t) {
+					report("%s: the DUT rack's task running at %.3fs while the DUT was not armed", task, e.t)
+				}
 				continue
 			}
 			if s, ok := stateAt(e.t); !ok || !s.armed || !s.leased {
