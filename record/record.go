@@ -726,6 +726,8 @@ const (
 	ControlShutdown     ControlRequest = 10 // the daemon, as it stopped
 	ControlChannelSet   ControlRequest = 11 // a write to an instrument's channel
 	ControlStop         ControlRequest = 12 // every instrument disarmed at once: the rack's stop
+	ControlMode         ControlRequest = 13 // a DUT mode change; Channel names the mode
+	ControlAction       ControlRequest = 14 // a DUT action; Channel names it
 )
 
 // ControlVerdict is the control plane's answer, given before anything reaches
@@ -740,6 +742,7 @@ const (
 	VerdictBelowFloor ControlVerdict = 4 // a cyclic period below the limits' floor
 	VerdictForbidden  ControlVerdict = 5 // the caller's role does not permit the request
 	VerdictAboveLimit ControlVerdict = 6 // a channel write beyond the limit set for the channel
+	VerdictBusy       ControlVerdict = 7 // a DUT mode change or action while another action is under way
 )
 
 // Via is the listener a request arrived through.
@@ -752,6 +755,11 @@ const (
 	// ViaProcedure is a procedure run, acting for whoever started it: By is
 	// their name, and they started it through one of the listeners above.
 	ViaProcedure Via = 3
+	// ViaAction is a DUT action, run by the DUT rack for whoever asked for it
+	// (By): a keyword of the contract's resource. It is admitted while the
+	// DUT instrument is armed, not under the lease of the instrument it acts
+	// on, which a client may hold or not; limits apply as to anyone.
+	ViaAction Via = 4
 )
 
 // A Control is one decision of the control plane.
@@ -1340,10 +1348,10 @@ func controlSchema(instrument, kind string) *logb.Schema {
 				numField("can_id", ctlCanID, 32, "", "the identifier a send or cyclic request named; 0 for other requests"),
 				numField("request", ctlRequest, 8, "", "1 send, 2 cyclic set, 3 cyclic delete, 4 arm, 5 disarm, "+
 					"6 lease take, 7 lease renew, 8 lease release, 9 lease expired, 10 shutdown, 11 channel set, "+
-					"12 stop: every instrument disarmed at once, under one seq"),
+					"12 stop: every instrument disarmed at once, under one seq; 13 a DUT mode change, 14 a DUT action"),
 				numField("verdict", ctlVerdict, 8, "", "0 accepted; refused: 1 not armed, 2 without the lease, "+
 					"3 the lease is held by another, 4 a cyclic period below the floor, 5 the caller's role does not permit it, "+
-					"6 a channel write above the channel's limit"),
+					"6 a channel write above the channel's limit, 7 a DUT action is already under way"),
 			},
 			flagFields(8*ctlFlags, "extended", "fd", "brs"),
 			held(
@@ -1365,9 +1373,9 @@ func controlSchema(instrument, kind string) *logb.Schema {
 				{Name: "by", BitOffset: 8 * ctlBy, BitWidth: 8 * HolderMax, Type: logb.TypeString,
 					Desc: "the authenticated name that made the request; empty on the local socket and for what the daemon did unasked"},
 				numField("via", ctlVia, 8, "", "0 the daemon, unasked; 1 the local socket; 2 the network listener, TLS with a named token; "+
-					"3 a procedure run, for the name in by"),
+					"3 a procedure run, for the name in by; 4 a DUT action, for the name in by"),
 				{Name: "channel", BitOffset: 8 * ctlChannel, BitWidth: 8 * HolderMax, Type: logb.TypeString,
-					Desc: "the channel a write named; empty for other requests"},
+					Desc: "the channel a write named, the mode a mode change named, the action an action named; empty for other requests"},
 				{Name: "value", BitOffset: 8 * ctlValue, BitWidth: 64, Type: logb.TypeFloat,
 					Desc: "the value a write asked for, whatever the verdict; 0 for other requests"},
 			},

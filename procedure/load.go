@@ -73,7 +73,15 @@ func (s *Suite) test(name string) *Block {
 //   - every variable is defined where it is used;
 //   - every condition compiles, with the names it reads typed;
 //   - no keyword calls itself, directly or through others.
-func Load(path string, env Env) (*Suite, error) {
+func Load(path string, env Env) (*Suite, error) { return load(path, env, false) }
+
+// LoadResource reads a resource file — keywords and variables, no test cases —
+// and checks it as Load checks a procedure, every keyword in it whether or
+// not anything calls it. Its keywords are run one at a time with Call: the
+// DUT rack's actions are such keywords (handoff C9).
+func LoadResource(path string, env Env) (*Suite, error) { return load(path, env, true) }
+
+func load(path string, env Env, resource bool) (*Suite, error) {
 	if env.Lib == nil {
 		env.Lib = NewLibrary("")
 	}
@@ -121,7 +129,12 @@ func Load(path string, env Env) (*Suite, error) {
 		if err != nil {
 			return err
 		}
-		if main {
+		if main && resource {
+			s.Doc = f.Doc
+			if len(f.Tests) > 0 {
+				return errAt(f.Tests[0].Pos, "a resource file has no test cases")
+			}
+		} else if main {
 			s.Doc = f.Doc
 			s.tests = f.Tests
 			if len(f.Tests) == 0 {

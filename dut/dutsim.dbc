@@ -15,6 +15,10 @@ BO_ 257 EngineData: 2 DUT
 BO_ 1792 DutReset: 1 TESTER
  SG_ Request : 0|8@1+ (1,0) [0|255] "" DUT
 
+BO_ 1793 TesterPresent: 1 TESTER
+ SG_ Active : 0|1@1+ (1,0) [0|1] "" DUT
+
 CM_ BO_ 256 "The simulated DUT's alive message, every 10 ms while it runs. counter counts modulo 16 and restarts at 0 on every boot.";
 CM_ BO_ 257 "Engine speed as the simulated DUT reports it, every 10 ms while it runs.";
 CM_ BO_ 1792 "Sent by the tester. Request = 1 resets the DUT; any other value is not a reset.";
+CM_ BO_ 1793 "Sent cyclically by the tester while the DUT is in an operating mode. The simulated DUT does not need it; it is there to be sent.";

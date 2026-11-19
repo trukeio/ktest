@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -78,6 +79,35 @@ func (s *Suite) Run(ctx, hard context.Context, test string, host Host) Result {
 	}
 	res.Outcome, res.End = OK, time.Now()
 	return res
+}
+
+// Call runs one keyword of the suite's own, with no arguments, as a step of
+// its own: the way the DUT rack runs an action. ctx bounds it; there is no
+// [Teardown] at this level, so hard is not needed.
+func (s *Suite) Call(ctx context.Context, keyword string, host Host) Result {
+	r := &runner{s: s, host: host, conds: map[string]*condEntry{}}
+	res := Result{Test: keyword, Start: time.Now()}
+	k, ok := s.kws[norm(keyword)]
+	if !ok {
+		res.Outcome, res.Msg, res.End = Fail, fmt.Sprintf("no keyword %q", keyword), time.Now()
+		return res
+	}
+	res.Test = k.Name
+	if _, err := r.call(ctx, &frame{vars: map[string]Value{}}, &Call{Pos: k.Pos, Name: k.Name}, 0); err != nil {
+		return r.fail(res, err)
+	}
+	res.Outcome, res.End = OK, time.Now()
+	return res
+}
+
+// Keywords are the suite's own keywords' names, as written.
+func (s *Suite) Keywords() []string {
+	var out []string
+	for _, k := range s.kws {
+		out = append(out, k.Name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func (r *runner) fail(res Result, err error) Result {
@@ -669,4 +699,19 @@ func (r *runner) cond(fr *frame, p Pos, src string) (bool, error) {
 type condEntry struct {
 	inputs []string
 	progs  map[string]*expr.Program
+}
+
+// Bare says, with a sentence when it cannot, whether a keyword of the suite's
+// own can be called with no arguments, as Call calls it.
+func (s *Suite) Bare(keyword string) error {
+	k, ok := s.kws[norm(keyword)]
+	if !ok {
+		return fmt.Errorf("no keyword %q", keyword)
+	}
+	for _, a := range k.Args {
+		if a.Default == nil {
+			return fmt.Errorf("keyword %q takes %s, and an action is called with no arguments", k.Name, a.Written)
+		}
+	}
+	return nil
 }

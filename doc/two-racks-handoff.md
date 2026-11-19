@@ -510,6 +510,48 @@ For M5 and M7, three things this milestone found:
 - **Live streams keep no index (decided 2026-11-19).** `logb.Writer` appended to its index for every DATA frame, for the INDEX it writes at `Close`, and never freed it. The `/stream/sub` writer writes a frame per record, so its memory grew by one entry per record for the daemon's whole life: measured at 2.3× peak RSS in a 6 s `cangen` flood, and at 2,000 frames/s about 5 GB a day. The rack writer grew the same way, about a hundred times slower. logb gained `Writer.NoIndex`, and SPEC §9 now says a writer may omit INDEX. ktest's `record.Config` gained `Live`, set for the rack and subscription streams. The flood's peak RSS is back to 183 MB.
 - **Cost under a flood.** In a 5 s `cangen -g 0` flood (about 250k frames/s, more than any real bus), ktestd records about as many frames as before (1.25M and 1.31M in two runs, against 1.28M), with about 7% more user CPU, because every record is encoded a third time. A hub with no subscriber no longer copies DATA frames.
 
+#### M5b: modes and actions (done 2026-11-19)
+
+- **Built:**
+  - The `dut` instrument, with its own lease and arming: `POST`/`PUT`/`DELETE /dut/lease`, `POST /dut/arm`, `POST /dut/disarm`.
+  - `PUT /dut/mode {"value": "active"}` and `POST /dut/actions/{name}`.
+  - The DUT library, `lib.NewDUT`: `Settle`, `Send Message`, `Start Cyclic`, `Stop Cyclic`, `Set Channel`, `Wait For Monitor`, and the BuiltIn subset.
+  - `procedure.LoadResource`, `Suite.Call` and `Suite.Bare`.
+  - The streams `mode`, `dut.action.<name>` and `dut.step`.
+  - The request codes 13 (mode change) and 14 (action), the verdict 7 (busy) and `via` 4 (a DUT action).
+  - `logbcheck` rules for all of these.
+- **Tests:**
+  - `TestDutResource`: the resource checked at start, and eight refusals, each with file:line.
+  - `TestDutSignals`: signal values in the signal's own unit.
+  - `TestControlCheckDUT`: the control rules, with eight planted faults.
+- **Measured live** on `vcan0`, with dutsim (`-behaviour reset`) behind psusim and a contract with the mode `active` (settle 200 ms) and the actions `enter_active`, `leave_active`, `reset`, `stall` and `hold`. Over the local socket:
+  - The mode is refused without the dut lease, and an unknown mode without a number.
+  - With a lease and arming, the mode runs its entry action (`Start Cyclic TesterPresent 100ms`) and is applied. `speed` goes `inactive → settling`, then `ok` exactly 200 ms later.
+  - A client's own cyclic task on a 2 s bus lease ran 2.1 s and stopped with that lease. The DUT rack's `TesterPresent` ran on, through that lapse and through the dut lease lapsing, for 5.9 s, until `POST /dut/disarm`.
+  - With the dut lease lapsed, `reset` is refused. With a new lease it sends one `DutReset`, the hung DUT reboots, and `Wait For Monitor alive` holds. A second action during it is refused as busy.
+  - `stall` ends `timeout` after its 500 ms. `hold` ends `stopped` when dut is disarmed.
+  - `logbcheck -control -psu` passes, against a candump of the bus (1,637 frames). `monitor-check -live` gives the rack's transitions to the nanosecond, the mode's settling included.
+
+#### M5b: choices for review
+
+- **`dut` is an instrument, leased and armed.** A mode change or action needs both, as a send needs the bus's. Arming is Ktest's rule before anything acts (§7), and the master's peer driver will take the lease and arm.
+- **The DUT goes on when its master goes** (decision 9, C3):
+  - A lapsed or released dut lease leaves dut armed and its tasks running; until it is leased again, only new modes and actions are refused.
+  - A lapsed or released bus lease stops the tasks its holder started, and leaves the DUT rack's.
+  - `POST /dut/disarm` and the stop end the action under way and every task the DUT rack holds.
+
+  `logbcheck` checks each of these, and flags a DUT rack's task stopped by a bus lease as an error.
+- **An action's requests go to the instrument they act on, with `via` 4.** A send or cyclic task is recorded in `vcan0.control`, a channel write in `psu1.control`, with `by` the name that asked for the action. They are admitted while dut is armed, not under that instrument's lease, and the floor and limits apply. This keeps every instrument's stream the whole account of what was done to it, so the existing supply and cyclic checks hold unchanged. A task belongs to the DUT rack when the decision that last started or changed it came from an action; a client's update to the same identifier makes it the client's.
+- **One action at a time.** A mode change or action while one runs is refused, recorded with verdict 7, busy. A mode's entry action is an action: it records `dut.action.<entry>` with the mode, and the mode is applied, with the monitors settling from that moment, only if the action succeeds. Otherwise `mode` records the failure, and `mode.applied` stays as it was. A mode with no action is applied at once. `""` leaves every mode.
+- **Timeouts** come from the contract's `timeouts` by action name, 30 s otherwise. A timeout ends `timeout`, and a disarm or stop ends `stopped`, each with a sentence saying which.
+- **The resource is checked at start, before anything is written**, with the DUT library, against the database, this rack's channels and the contract's monitors. Every action must be callable with no arguments. This is done on a stand-in daemon with the same configuration, then bound to the real one.
+- **Signals are given as a dictionary** from the Variables (`&{RESET}    Request=1`, passed as `${RESET}`), since the subset has no free named arguments. A value is read in the signal's own DBC unit: converted from another unit of its dimension (500mV for a V signal), taken as written when bare or in the signal's unit (3000rpm), and looked up in the value table when it is a name.
+- **`/stream/sub` always sends `mode`** as well as `mode.*`, since the stream is named `mode`. `dut.action.*` must be named, as the master's peer driver will.
+- **The mode's time is the wall clock alone** (`Round(0)`). With Go's monotonic reading, the recorder and the monitors disagreed by 9 ns after 2 s, and `monitor-check -live` caught it.
+- **`logbcheck` compares the bus in timestamp order.** Two senders on one host, a BCM task and dutsim 10 µs apart, reached the recorder and candump in different orders. The kernel stamps a frame once for every socket, so the stamp order is the bus's, and arrival order is a fact about a socket.
+- **`dutsim.dbc` gained `TesterPresent`** (0x701), a message for the tester to send cyclically in a mode. dutsim does not need it.
+- **Not built:** a ktestd test that drives the loop itself. ktestd has none, and the behaviour above was measured live, as in M2. M6's `examples/two-racks` will make that run a script anyone can repeat.
+
 ### M6: peer driver and daemon rules (master)
 
 - **Scope:** §4.6 and §4.7.

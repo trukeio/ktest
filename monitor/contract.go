@@ -105,6 +105,15 @@ type Mode struct {
 	Settle time.Duration
 }
 
+// ResourcePath is where the resource file is: named relative to the
+// contract. "" for a contract with none.
+func (c *Contract) ResourcePath() string {
+	if c.Resource == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(c.Path), c.Resource)
+}
+
 // Reserved is the monitor whose dev asks the master for protection (§4.2).
 const Reserved = "abort"
 

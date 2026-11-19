@@ -296,7 +296,7 @@ func (m *dutMon) write(w *tee, o monitor.Output) {
 // /stream/live, and the recording is unaffected.
 
 // alwaysSent are the streams every /stream/sub subscriber is sent.
-var alwaysSent = []string{"mon.watermark", "mon.gap", "mode.*"}
+var alwaysSent = []string{"mon.watermark", "mon.gap", "mode", "mode.*"}
 
 func streamSub(hub *stream.Hub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

@@ -635,11 +635,17 @@ func (p *procs) record(l *loop, t time.Time, e procEvent) {
 }
 
 func (p *procs) recordStep(l *loop, run uint32, ev procedure.StepEvent) {
+	recordStep(l, p.step, run, ev)
+}
+
+// recordStep writes one keyword call's start or end into a stream laid out as
+// procedure.step is.
+func recordStep(l *loop, st *teeStream, run uint32, ev procedure.StepEvent) {
 	t := ev.Start
 	if ev.End {
 		t = ev.Stop
 	}
-	err := l.w.Write(t, p.step, func(rec []byte) {
+	err := l.w.Write(t, st, func(rec []byte) {
 		putUint32(rec[stepRun:], run)
 		putUint32(rec[stepID:], ev.ID)
 		putUint32(rec[stepParent:], ev.Parent)

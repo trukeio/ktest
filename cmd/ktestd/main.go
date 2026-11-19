@@ -411,6 +411,7 @@ func main() {
 	// this daemon will record, so that one naming a channel it never will
 	// refuses the start.
 	var dm *dutMon
+	var di *dutInst
 	var online *monitor.Online
 	var monIn <-chan monitor.Item
 	if *contractPath != "" {
@@ -433,6 +434,33 @@ func main() {
 			fatalf("contract: %v", err)
 		}
 		dm = &dutMon{c: c, out: make(chan monitor.Output, 64), tick: *monTick}
+		// The actions' resource is checked now too, with the DUT library,
+		// against this rack's database, channels and monitors: an action that
+		// would fail on the day it is first asked for refuses the start.
+		var names []string
+		for _, s := range supplies {
+			names = append(names, s.name)
+		}
+		for _, s := range scopes {
+			names = append(names, s.name)
+		}
+		if slices.Contains(names, dutName) {
+			fatalf("contract: %q is the DUT rack's own instrument; give the supply or scope another name", dutName)
+		}
+		for _, n := range c.Order {
+			ct.Stream(monSchema(c, n))
+		}
+		ct.Stream(modeSchema())
+		stub := &daemon{bus: iface, db: cfg.DB, supplies: map[string]int{}, scopes: map[string]int{}}
+		for _, s := range supplies {
+			stub.supplies[s.name] = s.channels
+		}
+		for _, s := range scopes {
+			stub.scopes[s.name] = s.channels
+		}
+		if di, err = newDutInst(stub, c, ct); err != nil {
+			fatalf("contract: %v", err)
+		}
 		dm.tap, monIn = monitor.NewTap(online, *monQueue)
 		cfg.Meta["dut.monitors.window"] = monWindow.String()
 		cfg.Meta["dut.monitors.watermark"] = watermark.String()
@@ -581,8 +609,13 @@ func main() {
 	// mid-handshake, say — through a logger; this one says whose it is.
 	srvLog := log.New(os.Stderr, "ktestd: ", 0)
 	d.subHub = subHub
+	var dutStop context.CancelFunc
+	d.dutHard, dutStop = context.WithCancel(context.Background())
+	defer dutStop()
 	if dm != nil {
 		d.procs.contract = dm.c.Hash
+		d.contract = dm.c
+		di.bind(d, table)
 	}
 	ctl := &http.Server{Handler: local(d.mux(hub, rackHub)), ErrorLog: srvLog}
 	go serve(ctl, ln)
@@ -745,6 +778,10 @@ func main() {
 		if err := dm.declare(w, time.Now()); err != nil {
 			fatalf("%v", err)
 		}
+		if err := di.declare(w, time.Now()); err != nil {
+			fatalf("%v", err)
+		}
+		l.insts[dutName] = &inst{name: dutName, dut: di}
 		l.mon = dm
 		go online.Run(monIn, dm.out)
 		fmt.Fprintf(os.Stderr, "ktestd: contract %s (sha256 %.12s…), %d monitors live, window %v, watermark every %v\n",
@@ -973,6 +1010,11 @@ type daemon struct {
 	procs *procs
 
 	subHub *stream.Hub // /stream/sub
+
+	// The DUT rack's, with -contract.
+	contract *monitor.Contract
+	dutHard  context.Context // cancelled as the daemon stops, ending the action under way
+	dutCur   dutState        // the action under way, for its keywords
 }
 
 type reqKind int
@@ -990,6 +1032,8 @@ const (
 	reqStop
 	reqPanelSave // recorded in rack.panel, not in a control stream: a panel is no instrument
 	reqJob       // a decision taken by job on the loop, under its own number: a procedure start or stop
+	reqDutMode   // a DUT mode change: name is the mode
+	reqDutAction // a DUT action: name is the action
 )
 
 // controlOf is how each kind of request is named in <bus>.control.
@@ -1004,6 +1048,8 @@ var controlOf = map[reqKind]record.ControlRequest{
 	reqLeaseRelease: record.ControlLeaseRelease,
 	reqChannelSet:   record.ControlChannelSet,
 	reqStop:         record.ControlStop,
+	reqDutMode:      record.ControlMode,
+	reqDutAction:    record.ControlAction,
 }
 
 type request struct {
@@ -1023,7 +1069,11 @@ type request struct {
 	panel  []byte                                       // panel save: the panel, checked
 	match  string                                       // panel save: the sha256 of the panel it was edited from
 	job    func(l *loop, t time.Time, seq uint32) reply // reqJob: the decision, taken on the loop
-	reply  chan reply
+	name   string                                       // a DUT mode or action
+	// internal is a DUT action's own request: admitted while the DUT
+	// instrument is armed, not under the lease of the instrument it acts on.
+	internal bool
+	reply    chan reply
 }
 
 type reply struct {
@@ -1071,6 +1121,9 @@ type inst struct {
 	// A scope's, nil for anything else.
 	scp *scopeInst
 
+	// The DUT rack's, nil for anything else.
+	dut *dutInst
+
 	// connected says whether the instrument is answering. The bus is never
 	// anything else, and leaves it false, as it leaves everything above.
 	connected bool
@@ -1085,6 +1138,8 @@ func (in *inst) kind() string {
 		return "psu"
 	case in.scp != nil:
 		return "scope"
+	case in.dut != nil:
+		return "dut"
 	}
 	return "bus"
 }
@@ -1109,6 +1164,9 @@ type task struct {
 	frame  can.Frame
 	set    record.CyclicTask // set.Frame points at frame
 	active bool
+	// internal is a task the DUT rack holds, started by an action: it
+	// outlives the bus lease, and ends with a disarm of dut or the stop.
+	internal bool
 }
 
 // loop owns the recording, the transmit socket and the BCM socket, and the
@@ -1241,6 +1299,11 @@ func (l *loop) run(rx, echo <-chan can.Frame, done <-chan struct{}, fail <-chan 
 			// A run under way ends here, recorded as stopped before the
 			// instruments it drove are disarmed below.
 			l.d.procs.shutdown(l, time.Now())
+			// An action under way ends with the daemon; its end is recorded if
+			// it gets back to the loop before the loop is gone.
+			if in := l.insts[dutName]; in != nil {
+				in.dut.stopAction("stopped: the daemon is stopping")
+			}
 			// A supply's outputs are left as they are: the daemon stopping is
 			// not a reason to power down whatever the supply feeds.
 			t := time.Now()
@@ -1322,11 +1385,17 @@ func (l *loop) handle(r *request) reply {
 		return reply{seq: l.seq}
 	}
 	v, err := l.admit(in, r)
+	if err == nil && (r.kind == reqDutMode || r.kind == reqDutAction) && in.dut.run != nil {
+		v, err = record.VerdictBusy, fmt.Errorf("%w: action %s is under way", errDutBusy, in.dut.run.action)
+	}
 	if err != nil {
 		l.control(in, t, r, v)
 		return reply{seq: l.seq, err: err}
 	}
 	switch r.kind {
+	case reqDutMode, reqDutAction:
+		l.control(in, t, r, v)
+		return l.dutRequest(in, r, t)
 	case reqSend:
 		l.control(in, t, r, v)
 		return l.send(r, t)
@@ -1384,6 +1453,14 @@ func (l *loop) admit(in *inst, r *request) (record.ControlVerdict, error) {
 		return record.VerdictForbidden, fmt.Errorf("%w: %q has the view role, which may read the streams and disarm, and nothing more",
 			errForbidden, r.who.name)
 	}
+	if r.internal {
+		// A DUT action acts for the DUT rack, under the dut instrument's
+		// arming; the instrument it acts on is not its to lease.
+		if d := l.insts[dutName]; d == nil || !d.armed {
+			return record.VerdictNotArmed, fmt.Errorf("%w: the DUT is not armed", errNotArmed)
+		}
+		return l.limitsAdmit(in, r)
+	}
 	if r.kind == reqLeaseTake {
 		if in.lease != nil && !holds(in, r) && !sameName(in, r) {
 			return record.VerdictLeaseHeld, fmt.Errorf("%w: %q holds it for another %v",
@@ -1394,9 +1471,16 @@ func (l *loop) admit(in *inst, r *request) (record.ControlVerdict, error) {
 	if !holds(in, r) {
 		return record.VerdictNoLease, errNoLease
 	}
-	if (r.kind == reqSend || r.kind == reqCyclicSet || r.kind == reqChannelSet) && !in.armed {
+	if (r.kind == reqSend || r.kind == reqCyclicSet || r.kind == reqChannelSet ||
+		r.kind == reqDutMode || r.kind == reqDutAction) && !in.armed {
 		return record.VerdictNotArmed, errNotArmed
 	}
+	return l.limitsAdmit(in, r)
+}
+
+// limitsAdmit is the part of admit that holds whoever asks: the cyclic floor
+// and the channels' limits.
+func (l *loop) limitsAdmit(in *inst, r *request) (record.ControlVerdict, error) {
 	if r.kind == reqCyclicSet && r.period < l.floor {
 		return record.VerdictBelowFloor, fmt.Errorf("%w: a period of %v is below this daemon's floor of %v",
 			errBelowFloor, r.period, l.floor)
@@ -1454,8 +1538,23 @@ func (l *loop) expire(t time.Time) {
 // decision is recorded first and then its consequences, so that a reader meets
 // the cause before them.
 func (l *loop) disarm(in *inst, t time.Time, seq uint32, req record.ControlRequest, r *request, off bool) {
+	if in.dut != nil && !off {
+		// The DUT goes on running when its master goes (decision 9): a
+		// released or lapsed lease leaves it armed, and its tasks running.
+		l.record(in, t, seq, req, record.VerdictAccepted, r)
+		return
+	}
 	in.armed = false
 	l.record(in, t, seq, req, record.VerdictAccepted, r)
+	if in.dut != nil {
+		why := "stopped: the DUT was disarmed"
+		if req == record.ControlStop {
+			why = "stopped: the rack was stopped"
+		}
+		in.dut.stopAction(why)
+		l.endTasksOf(seq, true, record.CyclicDisarmed)
+		return
+	}
 	if in.sup != nil {
 		if off {
 			select {
@@ -1471,8 +1570,13 @@ func (l *loop) disarm(in *inst, t time.Time, seq uint32, req record.ControlReque
 		// acquisition in progress harms nothing by finishing.
 		return
 	}
+	// A lapsed or released bus lease stops what its holder started; the DUT
+	// rack's tasks are its own, and stop with a disarm or the stop.
 	for _, key := range slices.Sorted(maps.Keys(l.tasks)) {
 		tk := l.tasks[key]
+		if tk.internal && !off {
+			continue
+		}
 		dt := time.Now()
 		err := l.bcm.Delete(tk.frame.ID, tk.frame.FD())
 		if tk.active {
@@ -1481,6 +1585,26 @@ func (l *loop) disarm(in *inst, t time.Time, seq uint32, req record.ControlReque
 		}
 		// A task the kernel would not delete is still transmitting, and is
 		// kept, so that the loop does not lose track of it.
+		if err == nil || !tk.active {
+			delete(l.tasks, key)
+		}
+	}
+}
+
+// endTasksOf stops the tasks the DUT rack holds (internal) or the others,
+// under seq.
+func (l *loop) endTasksOf(seq uint32, internal bool, ev record.CyclicEvent) {
+	for _, key := range slices.Sorted(maps.Keys(l.tasks)) {
+		tk := l.tasks[key]
+		if tk.internal != internal {
+			continue
+		}
+		dt := time.Now()
+		err := l.bcm.Delete(tk.frame.ID, tk.frame.FD())
+		if tk.active {
+			l.write(dt, &record.Cyclic{Seq: seq, Event: ev, Err: err, Active: err != nil,
+				Set: tk.set, Applied: l.readback(tk.frame.ID, tk.frame.FD())})
+		}
 		if err == nil || !tk.active {
 			delete(l.tasks, key)
 		}
@@ -1506,6 +1630,8 @@ func (l *loop) record(in *inst, t time.Time, seq uint32, req record.ControlReque
 		case reqChannelSet:
 			c.Channel = channelName{in.name, r.part, r.what}.String()
 			c.Value = r.value
+		case reqDutMode, reqDutAction:
+			c.Channel = r.name
 		}
 	}
 	if in.lease != nil {
@@ -1531,7 +1657,7 @@ func (l *loop) send(r *request, t time.Time) reply {
 
 // cyclicSet starts a task or changes one.
 func (l *loop) cyclicSet(r *request, t time.Time) reply {
-	want := &task{frame: r.f, active: true}
+	want := &task{frame: r.f, active: true, internal: r.internal}
 	want.set = record.CyclicTask{Frame: &want.frame, Period: r.period, Count: r.count}
 	kt := can.Task{Frame: r.f}
 	if r.count > 0 {
@@ -1795,6 +1921,13 @@ func (d *daemon) mux(hub, rackHub *stream.Hub) *http.ServeMux {
 	m.HandleFunc("DELETE /scope/{scope}/lease", d.plain(reqLeaseRelease))
 	m.HandleFunc("POST /scope/{scope}/arm", d.plain(reqArm))
 	m.HandleFunc("POST /scope/{scope}/disarm", d.plain(reqDisarm))
+	m.HandleFunc("POST /dut/lease", d.leaseTake)
+	m.HandleFunc("PUT /dut/lease", d.leaseRenew)
+	m.HandleFunc("DELETE /dut/lease", d.plain(reqLeaseRelease))
+	m.HandleFunc("POST /dut/arm", d.plain(reqArm))
+	m.HandleFunc("POST /dut/disarm", d.plain(reqDisarm))
+	m.HandleFunc("PUT /dut/mode", d.dutMode)
+	m.HandleFunc("POST /dut/actions/{action}", d.dutAction)
 	m.HandleFunc("PUT /channels/{channel}", d.channelPut)
 	m.HandleFunc("POST /procedures/run", d.procs.start)
 	m.HandleFunc("DELETE /procedures/run", d.procs.stopRun)
@@ -1822,6 +1955,10 @@ func (d *daemon) mux(hub, rackHub *stream.Hub) *http.ServeMux {
 			"  POST   /scope/{name}/disarm      stop taking writes for it; no lease needed\n"+
 			"  PUT    /channels/{channel}       set an instrument: psu1.ch1.v.set, scope1.ch1.vert.vdiv.set,\n"+
 			"                                   scope1.timebase.tdiv.set, {\"value\": 5}\n"+
+			"  POST   /dut/lease, /dut/arm      the DUT's lease and arming, with -contract; DELETE and PUT as the bus's\n"+
+			"  POST   /dut/disarm               end the action under way and the DUT rack's cyclic tasks\n"+
+			"  PUT    /dut/mode                 change the DUT's mode: {\"value\": \"active\"}\n"+
+			"  POST   /dut/actions/{name}       run a DUT action\n"+
 			"  POST   /disarm                   stop: disarm everything, bus and supplies; no lease needed\n"+
 			"  POST   /procedures/run           run a procedure: {\"file\": \"ramp.robot\", \"test\": \"Ramp\"}\n"+
 			"  DELETE /procedures/run           stop it; its [Teardown] runs; no lease needed\n"+
@@ -1849,6 +1986,7 @@ func rack(ui, api http.Handler) http.Handler {
 	m.Handle("/channels/", api)
 	m.Handle("/procedures/", api)
 	m.Handle("/disarm", api)
+	m.Handle("/dut/", api)
 	m.Handle("/stream/", api)
 	m.Handle("/panel", api)
 	m.Handle("/", ui)
@@ -2094,6 +2232,9 @@ func (d *daemon) hasChannel(cn channelName) bool {
 // scope. Each has its own lease and its own arming (§7), so the path says which
 // kind it is and the daemon answers for that kind alone.
 func (d *daemon) instrument(w http.ResponseWriter, r *http.Request) (string, bool) {
+	if strings.HasPrefix(r.URL.Path, "/dut/") {
+		return dutName, d.dutOn(w)
+	}
 	if r.PathValue("bus") != "" {
 		return d.bus, d.ownBus(w, r)
 	}
@@ -2185,7 +2326,8 @@ func (d *daemon) submit(w http.ResponseWriter, r *http.Request, req *request) {
 		httpError(w, http.StatusForbidden, rep.seq, "%v", rep.err)
 	case errors.Is(rep.err, errProcedure):
 		httpError(w, http.StatusBadRequest, rep.seq, "%v", rep.err)
-	case errors.Is(rep.err, errNotArmed), errors.Is(rep.err, errLeaseHeld), errors.Is(rep.err, errProcBusy):
+	case errors.Is(rep.err, errNotArmed), errors.Is(rep.err, errLeaseHeld), errors.Is(rep.err, errProcBusy),
+		errors.Is(rep.err, errDutBusy):
 		httpError(w, http.StatusConflict, rep.seq, "%v", rep.err)
 	default:
 		// Recorded all the same, under this number: the request is part of
