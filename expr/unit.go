@@ -66,6 +66,10 @@ var bases = map[string]base{
 	"°C":   {dim: map[string]int{"°C": 1}, scale: 1},
 	"degC": {dim: map[string]int{"°C": 1}, scale: 1},
 	"%":    {dim: map[string]int{}, scale: 0.01},
+	// Minutes and hours are not SI, and are accepted beside it: a soak is
+	// written 2h, not 7200s. They take no prefix.
+	"min": {dim: map[string]int{"s": 1}, scale: 60},
+	"h":   {dim: map[string]int{"s": 1}, scale: 3600},
 }
 
 var prefixes = map[rune]float64{
@@ -73,7 +77,7 @@ var prefixes = map[rune]float64{
 }
 
 // unitList is how an error sentence names the units a literal may carry.
-const unitList = "V, A, W, Ohm, Hz, s, dB, °C and %, with an SI prefix where one makes sense"
+const unitList = "V, A, W, Ohm, Hz, s, min, h, dB, °C and %, with an SI prefix where one makes sense"
 
 // lookupUnit parses a unit this package knows, prefixed or not.
 func lookupUnit(s string) (Unit, bool) {

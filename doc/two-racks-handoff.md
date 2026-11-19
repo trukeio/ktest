@@ -360,6 +360,19 @@ Moved forward by §2.1 C1: the executor is ktestd's scripting, useful before a s
   - every refused construct and every load-time check;
   - the Robot parse check over the fixtures;
   - a run survives its client disconnecting; `DELETE` runs `[Teardown]`.
+- **Done (2026-11-19).** Packages `procedure` (parser, loader, executor, BuiltIn subset) and `procedure/lib` (rack keywords), `ktestd -procedures`, `POST`/`DELETE /procedures/run`, and the streams `procedure.run`, `procedure.step`, `procedure.result`. `record.Config` gained `OnStream` and `OnRecord`, which are the internal record subscription: they see records before encoding, on the writer's goroutine. M2 reads the latest value per channel from them, and M5 will feed the evaluator from the same hooks.
+
+#### M2: what was built, and choices for review
+
+- **How a run holds instruments.** §4.8 says a run starts "under the caller's lease". The caller's lease would lapse when the caller disconnects, so the run takes leases itself instead, for the caller's name. The first time it writes an instrument it takes the lease and arms it; it renews every 10 s and releases at the end. Every step is an ordinary control decision with `via` 3 (`record.ViaProcedure`) and `by` set to the starter's name. `logbcheck` holds these to the starter's role and lease, as it holds TLS requests. A consequence: an instrument the starter holds in their browser is "held by another" for the run, and the run fails `refused`. Release it first.
+- **A stop wins.** If someone stops the rack while a run is going, the run does not re-arm; its next write is refused and the run fails `refused`.
+- **Static typing of variables.** A variable is typed at load from its literal value, a keyword's declared return, or, for a keyword's arguments, each call site: a user keyword is checked once per distinct set of argument types, with the error naming the call (`(called from p.robot:4)`). A condition over a variable whose type is not known at load is refused. A keyword nobody calls is still checked; conditions over its untyped arguments wait for a call.
+- **Robot semantics kept:** cell text is a string until a keyword parameter converts it; `${x}` alone keeps its value's type; a value in a condition is read the way Robot's substitution would read it (`12V` is a number in volts, `True` a truth value, anything else text). Variables are local. `IF` defines a variable after it only if every branch, ELSE included, does. A loop defines nothing after it.
+- **A cell `name=value` is always a named argument**, and an unknown name is refused. Text containing `=` is written `name\=value`. This is stricter than Robot, so that "every argument name is valid" holds.
+- **New keywords**, under decision 8: `Wait Until    condition    timeout=10s    poll=10ms`, `Read Channel    name`, `Should Be Within    actual    expected    tolerance`. `Stress Apply` gained `current=`: psusim, like a real supply, starts with a 0 A current limit, so a stress without one measures 0 V. `Keyword.CheckArgs` checks at load that arguments agree with each other, such as the three units of `Should Be Within`.
+- **`expr` accepts `min` and `h`** for durations (`Settle    2h`). They are not SI, but they are accepted alongside it.
+- **Not done in M2:** YAML variable files, which are refused with a sentence (JSON works), and the rack UI for procedures (out of scope, §8).
+- **Measured live** on `vcan0` with `psusim`, over TLS and the local socket: a full ramp; a second start refused while the first runs; a refusal by the limits (14 V); a stop mid-ramp with the teardown run; a run ended by the daemon stopping; and a 40 s run outliving the 30 s lease term through renewal. `logbcheck -control -psu` passes on the recording: every control decision, the run's included, keeps to the limits and roles, and every supply write matches psusim's transcript.
 
 ### M3: package `monitor`, the contract loader and `cmd/monitor-check`
 

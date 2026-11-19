@@ -74,6 +74,8 @@ func TestPrecedenceAndUnits(t *testing.T) {
 		{"1V / 2A == 0.5Ohm", true},
 		{"1 / 1ms == 1kHz", true},
 		{"2 * 15ms == 30ms", true},
+		{"1h == 60min", true},
+		{"2min == 120s", true},
 		{"1.5e3mV == 1.5V", true},
 		{"50% == 50", true},
 		{"-3dB < 0dB", true},

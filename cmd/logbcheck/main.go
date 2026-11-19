@@ -412,6 +412,8 @@ const (
 	vAboveLimit = 6
 
 	viaTLS = 2
+
+	viaProcedure = 3
 )
 
 // needsLease is the requests the control plane admits only from the lease's
@@ -1321,7 +1323,9 @@ func compareControl(r *recording, verbose bool) (int, time.Duration, error) {
 			// Over the network every request is by a name the recording lists,
 			// does only what that name's role allows, and — when it needs the
 			// lease — is made by the name that holds it.
-			if c.via == viaTLS {
+			// A procedure run acts for the name that started it, and is held
+			// to that name's role as the name itself would be.
+			if c.via == viaTLS || c.via == viaProcedure && c.by != "" {
 				role, known := roles[c.by]
 				switch {
 				case !known:

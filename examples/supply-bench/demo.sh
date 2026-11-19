@@ -29,4 +29,4 @@ trap 'kill $sim 2>/dev/null' EXIT
 # After ktestd's own start-up lines, so that it is the last thing on screen.
 (sleep 1; printf '\n  Open https://localhost:8443/ in Chrome and log in with this token:\n\n    %s\n\n' "$(cat token)") &
 bin/ktestd -https :8443 -tokens tokens -panel rack.json -limits limits.json \
-    -psu psu1=127.0.0.1:5025,2 -sock /tmp/ktest-demo.sock -o demo.logb vcan0
+    -psu psu1=127.0.0.1:5025,2 -procedures procedures -sock /tmp/ktest-demo.sock -o demo.logb vcan0

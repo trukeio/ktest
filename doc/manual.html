@@ -528,8 +528,32 @@ finally:
     s.post(f"{RACK}/disarm")                   # outputs off, whatever happened
     s.delete(f"{RACK}/psu/psu1/lease")</code></pre>
 <p>Over HTTPS the lease holder is the token's name and cannot be chosen, so the recording's word for who held the supply is one nobody could have typed in for someone else.</p>
-<h3>Scripts inside the daemon <span class="st planned">planned</span></h3>
-<p>A script run by a client stops when the client does. For sequences that must survive a disconnect, such as an overnight thermal run, the daemon will run procedures itself, written in a strict subset of Robot syntax, one per run, each under a lease like any other client. Limit conditions will become expressions (<code>v_out &gt; 4.75 and v_out &lt; 5.25</code>) instead of fixed numbers, in the same expression language the procedures' conditions use, which is built (package <code>expr</code>). Neither will sit in the timing path: a script that stalls must not be able to stall the bus.</p>
+<h3>Procedures inside the daemon <span class="st built">built</span></h3>
+<p>A script run by a client stops when the client does. For sequences that must survive a disconnect, such as an overnight thermal run, the daemon runs procedures itself. A procedure is written in a strict subset of Robot Framework syntax, so it parses under Robot's own parser and reads as Robot to anyone who knows it; but it runs only here, in Go, and there is no Python. Start <code>ktestd</code> with <code>-procedures dir</code>, and a procedure is a file in that directory:</p>
+<pre class="code"><code>*** Variables ***
+${SUPPLY}        psu1.ch1
+@{LEVELS}        2V    4V    6V    8V
+
+*** Test Cases ***
+Ramp
+    [Teardown]    Stress Remove    ${SUPPLY}
+    FOR    ${level}    IN    @{LEVELS}
+        Stress Apply    ${SUPPLY}    ${level}    current=1A
+        Wait Until    psu1.ch1.out.applied    timeout=2s
+        Settle    300ms
+        ${v}=    Read Channel    psu1.ch1.meas.v
+        Should Be Within    ${v}    ${level}    0.2V
+        Record Step    ramp    ${level}    ok
+    END</code></pre>
+<pre class="code"><code>$ $K -d '{"file":"ramp.robot","test":"Ramp"}' http://ktest/procedures/run
+{"seq":1}
+$ $K -X DELETE http://ktest/procedures/run        # stop it; its [Teardown] still runs</code></pre>
+<p><strong>Checked before it runs.</strong> A procedure is loaded whole and refused, with a sentence naming the line, if anything in it is wrong: an unknown keyword or argument name, a missing argument, a quantity in the wrong unit (<code>Settle    5V</code>), a variable not defined where it is used, a condition that does not type-check, a keyword that calls itself. Constructs outside the subset are refused by name: <code>Library</code>, <code>Evaluate</code>, <code>${{…}}</code>, <code>TRY</code>/<code>EXCEPT</code>, <code>GROUP</code>, templates, <code>Run Keyword</code>, and the <code>Set Test/Suite/Global Variable</code> scopes. A <code>WHILE</code> must have <code>limit=</code>, a count or a duration.</p>
+<p><strong>Conditions</strong> in <code>IF</code>, <code>WHILE</code>, <code>Should Be True</code> and <code>Wait Until</code> are Ktest's expression language, the one monitors and limits use: comparisons and <code>and</code>, <code>or</code>, <code>not</code> over variables (<code>$level</code> or <code>${level}</code>) and channels (<code>psu1.ch1.meas.v &gt; 11.5V</code>), with units checked. A condition does no arithmetic; a value that needs computing is computed by a keyword, where it is recorded.</p>
+<p><strong>Keywords.</strong> <code>Log</code>, <code>Fail</code>, <code>Set Variable</code> and <code>Should Be True</code> behave as Robot's do. Ktest's own: <code>Settle    duration</code>; <code>Wait Until    condition    timeout=10s</code>; <code>Read Channel    name</code>; <code>Should Be Within    actual    expected    tolerance</code>; <code>Record Step    point    level    result    threshold=</code>; <code>Stress Apply    psu1.ch1    level    current=</code> and <code>Stress Remove    psu1.ch1</code>.</p>
+<p><strong>Acting.</strong> A run acts through the control plane for the name that started it. The first time it writes an instrument it takes the lease and arms it; it renews the lease while it runs and releases it at the end. Each of these is an ordinary control decision, recorded with <code>via</code> 3 and the starter's name, and held to the same limits and roles. An instrument someone else has leased is refused, and the run fails as <code>refused</code>. A stop disarms the run's instruments like any other's; the run does not arm them again, and its next write is refused.</p>
+<p><strong>Recorded.</strong> <code>procedure.run</code> holds whether a run is under way, which test from which file, and the sha256 of every file it was loaded from. <code>procedure.step</code> has every keyword call at its start and its end, with its arguments as resolved and its outcome (<code>ok</code>, <code>nok</code>, <code>timeout</code>, <code>refused</code>, <code>fail</code>, <code>stopped</code>). <code>procedure.result</code> has what <code>Record Step</code> records. One run is under way at a time, and it survives the client that started it disconnecting.</p>
+<p>Not yet: YAML variable files (JSON works), and the locked mode that refuses a procedure whose files have changed since they were validated.</p>
 
 <h2 id="agents">1.6 With an LLM agent</h2>
 <p><span class="st proposed">proposed</span> Nothing in this section is built, and the names in it are placeholders. It describes how an agent is meant to fit, so that the design can be discussed before it is written.</p>
@@ -579,6 +603,7 @@ $ claude mcp add ktest -- ktest-mcp -url https://rack:8443 \
 <tr><td><code>-scope name=host:port[,channels][,full=ch1+ch2]</code></td><td></td><td>an oscilloscope to drive; repeatable. <code>full=</code> names the channels recorded at full rate</td></tr>
 <tr><td><code>-panel file</code></td><td></td><td>the rack panel: served to the browser, saved to from it, embedded in the recording</td></tr>
 <tr><td><code>-limits file</code></td><td>built in</td><td>the limits to enforce</td></tr>
+<tr><td><code>-procedures dir</code></td><td></td><td>a directory of procedures clients may ask the daemon to run (<a href="#scripts">§1.5</a>)</td></tr>
 <tr><td><code>-sock path</code></td><td><code>/run/ktest.sock</code></td><td>the local control socket</td></tr>
 <tr><td><code>-https addr</code></td><td></td><td>control, streams and the rack over TLS, with tokens</td></tr>
 <tr><td><code>-tokens file</code></td><td></td><td>the names <code>-https</code> admits</td></tr>
@@ -958,7 +983,8 @@ $ ktestd -https :8443 -tokens tokens -panel rack.json -psu psu1=192.168.1.20:502
 <tr><td>3</td><td><strong>Panels.</strong> The rack, the widget set, the panel editor, the supply driver</td><td><span class="st built">built</span>, except the trace table</td></tr>
 <tr><td>4</td><td><strong>Scope and waveforms.</strong> The scope driver, envelopes, the scope widget</td><td><span class="st built">built</span> against the simulator</td></tr>
 <tr><td></td><td>The real SDS1202X-E; hardware timestamps; the scope's trigger on the recording's timeline</td><td><span class="st planned">in progress</span></td></tr>
-<tr><td>5</td><td><strong>Scripting.</strong> Expressions (built), then procedures in a Robot subset</td><td><span class="st planned">planned</span></td></tr>
+<tr><td>5</td><td><strong>Scripting.</strong> The expression language; procedures in a Robot subset, run by the daemon</td><td><span class="st built">built</span> for a single rack</td></tr>
+<tr><td></td><td>Two racks: DUT monitors, the subscription stream, the peer driver, DUT keywords; locked mode</td><td><span class="st planned">planned</span></td></tr>
 <tr><td></td><td>Replay in the rack; packaging as a service; more instrument kinds and dialects by configuration; USBTMC</td><td><span class="st planned">planned</span></td></tr>
 <tr><td></td><td>Several buses; LIN; ISO-TP; J1939</td><td><span class="st planned">planned</span></td></tr>
 <tr><td></td><td>The agent tool server</td><td><span class="st proposed">proposed</span></td></tr>

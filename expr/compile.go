@@ -74,6 +74,9 @@ func (p *Program) Slot(name string) (int, bool) {
 	return i, ok
 }
 
+// LastSample is when input i's latest sample was taken, 0 before any.
+func (p *Program) LastSample(i int) int64 { return p.slots[i].lastT }
+
 // Observe gives the program a sample of input i taken at t, in nanoseconds.
 // A number is in the unit the input's type states. Samples of one input
 // arrive in time order; one that does not is refused rather than reordered,

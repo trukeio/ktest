@@ -603,7 +603,7 @@ replaced:
 | Layer | Tool | Why |
 |---|---|---|
 | Monitors, limits and conditions | Ktest's own `expr` package (**built**) | One grammar for all three, with units checked at load (`Vx > 1.0V`, a bare number takes its neighbour's unit), time functions over a channel's history (`age`, `delta`, `rate`, `mean`, `stable`) and three profiles. Logic is `and`, `or`, `not`: `v_out > 4.75 and v_out < 5.25`. `expr-lang` has no unit literals, no dimension checks and no stateful call sites; the reasons are in the handoff, M1. |
-| Orchestration | Procedures in a strict subset of Robot syntax, run by a Go executor in the daemon (*planned*) | A test engineer reads and writes it without learning a programming language. Loops are bounded (`WHILE` needs a `limit=`), there is no `Evaluate` and no Python, and algorithms are library keywords written in Go. A new need is a new keyword or a new parameter, never new syntax. |
+| Orchestration | Procedures in a strict subset of Robot syntax, run by a Go executor in the daemon (**built** for a single rack: packages `procedure` and `procedure/lib`, `ktestd -procedures`) | A test engineer reads and writes it without learning a programming language. Loops are bounded (`WHILE` needs a `limit=`), there is no `Evaluate` and no Python, and algorithms are library keywords written in Go. A new need is a new keyword or a new parameter, never new syntax. |
 | Analysis-heavy work | External, over REST | numpy, scipy, pandas. Runs as the user's own process. |
 
 There is no Lua. DUT actions on a second rack are keywords too; Lua monitors,
@@ -1483,8 +1483,13 @@ opinion rather than the same answer arrived at cheaply.
    published. On the same bus as the MCP2518FD, it shows what the crystal and
    the transmit event FIFO buy.
 5. **Scripting.** *Superseded (2026-11-19):* the plan is now Ktest's own
-   `expr` package (**built**), then procedures in a Robot subset; see §9.2 and
-   `doc/two-racks-handoff.md`. What follows is the reasoning as first written.
+   `expr` package, then procedures in a Robot subset; see §9.2 and
+   `doc/two-racks-handoff.md`. **Both are built for a single rack**: `ktestd
+   -procedures` runs a procedure that survives its client, acting through the
+   control plane under leases it takes for the name that started it, and
+   records every keyword call; `logbcheck -control` holds those decisions to
+   the same roles and limits as anyone's. What follows is the reasoning as
+   first written.
    **Lua first, `expr` after.** §9.2 keeps both layers, and the
    build order is now the other way round from what this line first said,
    because the two are not equally urgent. Orchestration is the thing a bench

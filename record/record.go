@@ -145,6 +145,30 @@ type Config struct {
 
 	// Warn, if set, is told about anything that could not be carried across.
 	Warn func(format string, a ...any)
+
+	// OnStream and OnRecord, if set, see every stream as it is declared and
+	// every record as it is written, before anything is encoded: the daemon's
+	// internal subscription, by which a procedure's conditions read the
+	// channels' latest values. They are called on the writer's goroutine and
+	// must not block it. rec belongs to the writer; a consumer that keeps it
+	// copies it. Waveform samples do not pass through OnRecord: they are not
+	// values a condition reads.
+	OnStream func(s *logb.Schema)
+	OnRecord func(s *logb.Schema, t time.Time, rec []byte)
+}
+
+// hooked is a writer that tells Config.OnStream of each stream it declares.
+type hooked struct {
+	writer
+	on func(*logb.Schema)
+}
+
+func (h hooked) AddStream(s *logb.Schema) error {
+	if err := h.writer.AddStream(s); err != nil {
+		return err
+	}
+	h.on(s)
+	return nil
 }
 
 const (
@@ -264,6 +288,9 @@ func New(w io.Writer, cfg Config) (*Writer, error) {
 		lw = p
 	}
 
+	if cfg.OnStream != nil {
+		lw = hooked{lw, cfg.OnStream}
+	}
 	now := cfg.Now()
 	rw := &Writer{
 		w:        lw,
@@ -702,6 +729,9 @@ const (
 	ViaDaemon Via = 0 // nobody asked: the daemon acted on its own
 	ViaUnix   Via = 1 // the local socket, trusted as its file permissions are
 	ViaTLS    Via = 2 // the network listener, TLS with a named token
+	// ViaProcedure is a procedure run, acting for whoever started it: By is
+	// their name, and they started it through one of the listeners above.
+	ViaProcedure Via = 3
 )
 
 // A Control is one decision of the control plane.
@@ -881,6 +911,11 @@ func (w *Writer) rotate(t time.Time) error {
 }
 
 func (w *Writer) maybeFlush(st *stream) error {
+	if w.cfg.OnRecord != nil && st.n > 0 {
+		rec := st.buf[len(st.buf)-st.s.RecordBytes():]
+		off := int64(binary.LittleEndian.Uint64(rec))
+		w.cfg.OnRecord(st.s, w.epoch.Add(time.Duration(w.segBase+off)), rec)
+	}
 	if int(st.n) < w.cfg.PerFrame {
 		return nil
 	}
@@ -1294,7 +1329,8 @@ func controlSchema(instrument, kind string) *logb.Schema {
 			[]logb.Field{
 				{Name: "by", BitOffset: 8 * ctlBy, BitWidth: 8 * HolderMax, Type: logb.TypeString,
 					Desc: "the authenticated name that made the request; empty on the local socket and for what the daemon did unasked"},
-				numField("via", ctlVia, 8, "", "0 the daemon, unasked; 1 the local socket; 2 the network listener, TLS with a named token"),
+				numField("via", ctlVia, 8, "", "0 the daemon, unasked; 1 the local socket; 2 the network listener, TLS with a named token; "+
+					"3 a procedure run, for the name in by"),
 				{Name: "channel", BitOffset: 8 * ctlChannel, BitWidth: 8 * HolderMax, Type: logb.TypeString,
 					Desc: "the channel a write named; empty for other requests"},
 				{Name: "value", BitOffset: 8 * ctlValue, BitWidth: 64, Type: logb.TypeFloat,

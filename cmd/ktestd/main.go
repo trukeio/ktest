@@ -231,6 +231,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/rveen/ktest/can"
+	"github.com/rveen/ktest/procedure/lib"
 	"github.com/rveen/ktest/psu"
 	"github.com/rveen/ktest/record"
 	dso "github.com/rveen/ktest/scope"
@@ -261,6 +262,7 @@ func main() {
 		stateDir   = flag.String("state", defaultStateDir(), "where the daemon keeps what it makes, such as its certificate")
 		newToken   = flag.String("new-token", "", "make a token for name:role (view or operate): the token to stderr, "+
 			"the line that admits it to stdout; then exit")
+		procDir   = flag.String("procedures", "", "a directory of procedures, Robot syntax, that clients may ask the daemon to run")
 		panelPath = flag.String("panel", "", "a rack panel, JSON: served to the browser and embedded in the recording")
 		psuPoll   = flag.Duration("psu-poll", 100*time.Millisecond, "how often each supply's channels are measured")
 		scopePoll = flag.Duration("scope-poll", 5*time.Millisecond, "how often each scope is asked whether an acquisition has completed")
@@ -476,6 +478,11 @@ func main() {
 	}
 	bw := bufio.NewWriterSize(f, 1<<20)
 	hub := stream.New()
+	// The internal subscription: every stream and the latest record of each,
+	// for a procedure's conditions. The recording's writer feeds it; the
+	// rack's writer carries the same records and does not.
+	table := newChanTable()
+	cfg.OnStream, cfg.OnRecord = table.onStream, table.onRecord
 	fw, err := record.New(io.MultiWriter(bw, hub), cfg)
 	if err != nil {
 		fatalf("%v", err)
@@ -485,6 +492,7 @@ func main() {
 	rcfg := cfg
 	rcfg.Codec, rcfg.Filter, rcfg.Path = logb.CodecNone, logb.FilterNone, ""
 	rcfg.Warn = nil // said once, by the recording's writer
+	rcfg.OnStream, rcfg.OnRecord = nil, nil
 	rw, err := record.New(rackHub, rcfg)
 	if err != nil {
 		fatalf("%v", err)
@@ -493,7 +501,9 @@ func main() {
 
 	d := &daemon{bus: iface, db: cfg.DB, panelPath: *panelPath,
 		supplies: map[string]int{}, scopes: map[string]int{},
-		reqs: make(chan *request), closing: make(chan struct{}), gone: make(chan struct{})}
+		reqs: make(chan *request), closing: make(chan struct{}), gone: make(chan struct{}),
+		jobs: make(chan func(*loop), 64)}
+	d.procs = newProcs(d, *procDir, table)
 	if panelRaw != nil {
 		d.panel.Store(newPanelState(panelRaw, 1, ""))
 	} else {
@@ -658,6 +668,12 @@ func main() {
 		go func() { defer wg.Done(); s.run(stop) }()
 		fmt.Fprintf(os.Stderr, "ktestd: scope %s at %s, %d channels, %d envelope columns, sign rule %s, full rate %s\n",
 			s.name, s.addr, s.channels, Buckets, signRule, cfg.Meta["scope."+s.name+".full_rate"])
+	}
+	if err := d.procs.declare(w); err != nil {
+		fatalf("%v", err)
+	}
+	if *procDir != "" {
+		fmt.Fprintf(os.Stderr, "ktestd: procedures from %s, library %s\n", *procDir, lib.Version)
 	}
 	// Every instrument's control stream is declared now, with its kind, so a
 	// rack that has only just connected knows a scope from a supply before
@@ -874,6 +890,11 @@ type daemon struct {
 	// will now never carry it out is not waited on for ever.
 	closing chan struct{}
 	gone    chan struct{}
+
+	// jobs is work for the loop that answers nobody: a procedure's steps and
+	// results, written where every other record is written.
+	jobs  chan func(l *loop)
+	procs *procs
 }
 
 type reqKind int
@@ -890,6 +911,7 @@ const (
 	reqChannelSet
 	reqStop
 	reqPanelSave // recorded in rack.panel, not in a control stream: a panel is no instrument
+	reqJob       // a decision taken by job on the loop, under its own number: a procedure start or stop
 )
 
 // controlOf is how each kind of request is named in <bus>.control.
@@ -912,16 +934,17 @@ type request struct {
 	who    caller // who asked, and through which listener
 	token  string // the Ktest-Lease header, "" if none was sent
 	f      can.Frame
-	part   string        // channel set: the part of the instrument, "ch1" or "ch1.vert" or "timebase"
-	ch     int           // channel set: the channel the part names, from 1; 0 when it names none
-	what   string        // channel set: the quantity, "v", "i", "out", "vdiv", "tdiv", ...
-	value  float64       // channel set: the value, a switch as 0 or 1
-	period time.Duration // cyclic only
-	count  uint32        // cyclic only
-	holder string        // lease take only
-	ttl    time.Duration // lease take and renew; 0 keeps the lease's term
-	panel  []byte        // panel save: the panel, checked
-	match  string        // panel save: the sha256 of the panel it was edited from
+	part   string                                       // channel set: the part of the instrument, "ch1" or "ch1.vert" or "timebase"
+	ch     int                                          // channel set: the channel the part names, from 1; 0 when it names none
+	what   string                                       // channel set: the quantity, "v", "i", "out", "vdiv", "tdiv", ...
+	value  float64                                      // channel set: the value, a switch as 0 or 1
+	period time.Duration                                // cyclic only
+	count  uint32                                       // cyclic only
+	holder string                                       // lease take only
+	ttl    time.Duration                                // lease take and renew; 0 keeps the lease's term
+	panel  []byte                                       // panel save: the panel, checked
+	match  string                                       // panel save: the sha256 of the panel it was edited from
+	job    func(l *loop, t time.Time, seq uint32) reply // reqJob: the decision, taken on the loop
 	reply  chan reply
 }
 
@@ -1083,6 +1106,9 @@ func (l *loop) run(rx, echo <-chan can.Frame, done <-chan struct{}, fail <-chan 
 		case e := <-l.scopes:
 			l.scopeEvent(e)
 
+		case j := <-l.d.jobs:
+			j(l)
+
 		case <-tick.C:
 			l.expire(time.Now())
 			// The recorder first, which turns buffered records into frames,
@@ -1105,6 +1131,9 @@ func (l *loop) run(rx, echo <-chan can.Frame, done <-chan struct{}, fail <-chan 
 			// should be a finding only when it is true.
 			done, reqs = nil, nil
 			close(l.d.closing)
+			// A run under way ends here, recorded as stopped before the
+			// instruments it drove are disarmed below.
+			l.d.procs.shutdown(l, time.Now())
 			// A supply's outputs are left as they are: the daemon stopping is
 			// not a reason to power down whatever the supply feeds.
 			t := time.Now()
@@ -1159,6 +1188,9 @@ func (l *loop) handle(r *request) reply {
 	}
 
 	l.seq++
+	if r.kind == reqJob {
+		return r.job(l, t, l.seq)
+	}
 	if r.kind == reqPanelSave {
 		return l.savePanel(r, t)
 	}
@@ -1645,6 +1677,8 @@ func (d *daemon) mux(hub, rackHub *stream.Hub) *http.ServeMux {
 	m.HandleFunc("POST /scope/{scope}/arm", d.plain(reqArm))
 	m.HandleFunc("POST /scope/{scope}/disarm", d.plain(reqDisarm))
 	m.HandleFunc("PUT /channels/{channel}", d.channelPut)
+	m.HandleFunc("POST /procedures/run", d.procs.start)
+	m.HandleFunc("DELETE /procedures/run", d.procs.stopRun)
 	m.HandleFunc("POST /disarm", func(w http.ResponseWriter, r *http.Request) {
 		d.submit(w, r, &request{kind: reqStop})
 	})
@@ -1669,6 +1703,8 @@ func (d *daemon) mux(hub, rackHub *stream.Hub) *http.ServeMux {
 			"  PUT    /channels/{channel}       set an instrument: psu1.ch1.v.set, scope1.ch1.vert.vdiv.set,\n"+
 			"                                   scope1.timebase.tdiv.set, {\"value\": 5}\n"+
 			"  POST   /disarm                   stop: disarm everything, bus and supplies; no lease needed\n"+
+			"  POST   /procedures/run           run a procedure: {\"file\": \"ramp.robot\", \"test\": \"Ramp\"}\n"+
+			"  DELETE /procedures/run           stop it; its [Teardown] runs; no lease needed\n"+
 			"  GET    /panel                    the rack's panel, its sha256 as the ETag\n"+
 			"  PUT    /panel                    save a panel, with If-Match: the ETag of the one it was edited from\n"+
 			"  GET    /stream/live              the recording, live, as Logb\n"+
@@ -1689,6 +1725,7 @@ func rack(ui, api http.Handler) http.Handler {
 	m.Handle("/psu/", api)
 	m.Handle("/scope/", api)
 	m.Handle("/channels/", api)
+	m.Handle("/procedures/", api)
 	m.Handle("/disarm", api)
 	m.Handle("/stream/", api)
 	m.Handle("/panel", api)
@@ -2023,7 +2060,9 @@ func (d *daemon) submit(w http.ResponseWriter, r *http.Request, req *request) {
 	case errors.Is(rep.err, errNoLease), errors.Is(rep.err, errBelowFloor), errors.Is(rep.err, errForbidden),
 		errors.Is(rep.err, errAboveLimit):
 		httpError(w, http.StatusForbidden, rep.seq, "%v", rep.err)
-	case errors.Is(rep.err, errNotArmed), errors.Is(rep.err, errLeaseHeld):
+	case errors.Is(rep.err, errProcedure):
+		httpError(w, http.StatusBadRequest, rep.seq, "%v", rep.err)
+	case errors.Is(rep.err, errNotArmed), errors.Is(rep.err, errLeaseHeld), errors.Is(rep.err, errProcBusy):
 		httpError(w, http.StatusConflict, rep.seq, "%v", rep.err)
 	default:
 		// Recorded all the same, under this number: the request is part of
