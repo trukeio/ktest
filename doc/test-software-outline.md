@@ -1488,7 +1488,10 @@ opinion rather than the same answer arrived at cheaply.
    -procedures` runs a procedure that survives its client, acting through the
    control plane under leases it takes for the name that started it, and
    records every keyword call; `logbcheck -control` holds those decisions to
-   the same roles and limits as anyone's. What follows is the reasoning as
+   the same roles and limits as anyone's. **Locked mode is built** (handoff
+   §4.9, M8): `ktestd -locked hashes.json` holds every run to the sums of the
+   binary, the library, the limits, the instrument configuration and each
+   procedure file, and accredits, refuses or marks it. What follows is the reasoning as
    first written.
    **Lua first, `expr` after.** §9.2 keeps both layers, and the
    build order is now the other way round from what this line first said,

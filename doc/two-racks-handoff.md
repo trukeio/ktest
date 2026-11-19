@@ -673,12 +673,42 @@ For M5 and M7, three things this milestone found:
   - a matching run is marked accredited;
   - a changed procedure byte refuses the run, or marks it, as configured.
 
+#### M8: what was built (2026-11-19)
+
+- **`ktestd -locked locked.json`** (`cmd/ktestd/locked.go`), with `-procedures`. The file:
+
+  ```json
+  {"schema": 1, "on_mismatch": "refuse", "binary": "<sha256>", "library": "ktest-lib 0.1.0",
+   "limits": "<sha256>" | "built-in", "instruments": "<sha256>",
+   "procedures": {"sweep.robot": "<sha256>", "common.resource": "<sha256>"}}
+  ```
+
+  Loaded strictly: unknown keys, a sum that is not 64 lowercase hex digits, an `on_mismatch` other than `refuse` or `mark`, a procedure path outside the directory or not in clean form, and a file with no procedures all refuse the start.
+- **`ktestd … -lock-hashes`** writes that file for the configuration given by the other flags, and exits before touching a bus or an instrument.
+- **At run start** the loaded procedure is held to the file: the daemon's four sums, and every file the procedure was loaded from (`procedure.Suite.Sums`, new: the sha256 of each file's parsed bytes). Nothing differs: accredited. Something differs: refused, `403` and a `procedure.run` refusal naming what, or with `mark`, run and recorded as not accredited with the same sentence.
+- **`procedure.run`** gains `accredited` (held, bit 1 of the state byte) and `lock` (held, the lock file's sha256, bytes 580–643); `mode` is now `locked` or `engineering`. The lock file is attached to the recording as `locked.json`, with `locked.source` and `locked.sha256` in its provenance.
+- **Tests:** `TestLockedRun` drives `POST /procedures/run` through a loop recording to memory and reads `procedure.run` back: a matching run accredited; one byte changed in the procedure, or in a resource it pulls in, refused under `refuse` and marked under `mark`; a file the lock does not list refused; a changed binary refusing a matching procedure; engineering mode accrediting nothing. Breaking the per-file comparison fails four of them. `TestLoadLockedRefusals` (13 sentences), `TestLockedDaemonDiffs`, `TestLockSums`, `TestInstrumentConfig`.
+- **Measured live** on `vcan0` with `psusim` and the supply bench's `ramp.robot`: a matching run recorded `accredited=true mode=locked` at start and end; one comment line appended to `ramp.robot` was refused with `ramp.robot (sha256 e2d35abea965…, locked 95bc58878ab9…)`; the same under `mark` ran to `ok` with `accredited=false` and that sentence.
+
+#### M8: choices for review
+
+- **The check is per run, not at start.** A daemon whose binary, limits or instruments differ from its lock still starts, records and drives its instruments, and says at start that every run will be refused (or marked). Refusing the start would take the rack down for what concerns only accreditation. The convention "doubtful configuration refused at start" still applies to the lock file itself.
+- **Per-file sums, not the suite hash.** `procedure.run`'s `hash` covers one run's files together; a lock lists each file, so that one lock covers every procedure in the directory, and a refusal says which file changed. `-lock-hashes` sums every regular file under the directory (dotfiles skipped). A file a run uses that the lock does not list counts as a difference.
+- **Sums of the parsed bytes.** The sums are taken as the procedure is loaded, from the bytes that were parsed, so a file changed between the check and the run cannot slip through.
+- **The binary is `/proc/self/exe`**, the file this process started from, even if another has since been installed at its path.
+- **The library is compared by its version string**, as §4.9 says, not hashed; it is compiled into the binary, whose sum covers it anyway.
+- **"Instrument configuration"** is the sha256 of a sorted text: the bus, the DBC file's sha256 (or `none`), every `psu.*` and `scope.*` provenance line (address, channels, dialect, sign rule, trigger delay, full-rate channels), and the two poll periods. Instrument addresses are in it, so moving a supply to another address needs a new lock. `-panel` is not: it is presentation.
+- **The DUT contract is not locked.** It changes with each DUT and is validated on the DUT rack's side; the master already refuses a contract that differs from the DUT rack's, and every run records its sha256. Locking it would mean a new lock file per DUT. Add `"contract"` to the file if the lab wants it.
+- **Without `-limits`**, the lock says `"limits": "built-in"`: the defaults are part of the binary.
+- **A refusal is `403`** (`errLocked`), as a refusal by policy is, not `400`: the procedure itself is valid.
+- **Engineering mode records `accredited=false`**, never true: accreditation needs a lock.
+
 ## 7. Open questions and what to assume meanwhile
 
 | Question | Assume until answered |
 |---|---|
 | Who writes monitor expressions and signs off the contract? | not a software question; record the contract hash, nothing more |
-| Locked mode: refuse, or mark as not accredited? | refuse by default, configurable |
+| Locked mode: refuse, or mark as not accredited? | refuse by default, configurable (built in M8: `"on_mismatch"`) |
 | Is the REST clock offset enough, or is PTP needed? | REST estimate with uncertainty; PTP later, as an alternative source |
 | Which watermark age means monitoring lost? | 100 ms default, configurable per lab |
 | May a run continue after reconnection? | no: the run fails; a new run starts |

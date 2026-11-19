@@ -265,7 +265,11 @@ func main() {
 		stateDir   = flag.String("state", defaultStateDir(), "where the daemon keeps what it makes, such as its certificate")
 		newToken   = flag.String("new-token", "", "make a token for name:role (view or operate): the token to stderr, "+
 			"the line that admits it to stdout; then exit")
-		procDir   = flag.String("procedures", "", "a directory of procedures, Robot syntax, that clients may ask the daemon to run")
+		procDir  = flag.String("procedures", "", "a directory of procedures, Robot syntax, that clients may ask the daemon to run")
+		lockPath = flag.String("locked", "", "-procedures: a file of the sha256 sums a validated configuration had; "+
+			"each run is held to it, and accredited, refused or marked")
+		lockHashes = flag.Bool("lock-hashes", false, "-procedures: write the -locked file this configuration would need "+
+			"to stdout; then exit")
 		panelPath = flag.String("panel", "", "a rack panel, JSON: served to the browser and embedded in the recording")
 		psuPoll   = flag.Duration("psu-poll", 100*time.Millisecond, "how often each supply's channels are measured")
 		scopePoll = flag.Duration("scope-poll", 5*time.Millisecond, "how often each scope is asked whether an acquisition has completed")
@@ -408,6 +412,38 @@ func main() {
 			fatalf("%v", err)
 		}
 		cfg.DB = db
+	}
+
+	// Locked mode (handoff §4.9). The daemon's own sums are taken here, once,
+	// from what it has read and is about to run with.
+	var lock *locked
+	if *lockPath != "" || *lockHashes {
+		if *procDir == "" {
+			fatalf("-locked and -lock-hashes hold procedures to their sums, and there are none without -procedures")
+		}
+		have, err := lockStateOf(*database, limRaw, iface, cfg.Meta, *psuPoll, *scopePoll)
+		if err != nil {
+			fatalf("locked: %v", err)
+		}
+		if *lockHashes {
+			f, err := lockSums(have, *procDir)
+			if err != nil {
+				fatalf("lock-hashes: %v", err)
+			}
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			if err := enc.Encode(f); err != nil {
+				fatalf("%v", err)
+			}
+			return
+		}
+		var raw []byte
+		if lock, raw, err = loadLocked(*lockPath, have); err != nil {
+			fatalf("locked: %v", err)
+		}
+		cfg.Meta["locked.source"] = *lockPath
+		cfg.Meta["locked.sha256"] = lock.hash
+		cfg.Attach["locked.json"] = raw
 	}
 
 	// A peer is checked before anything is written too: it must answer, with
@@ -635,6 +671,7 @@ func main() {
 		reqs: make(chan *request), closing: make(chan struct{}), gone: make(chan struct{}),
 		jobs: make(chan func(*loop), 64)}
 	d.procs = newProcs(d, *procDir, table)
+	d.procs.lock = lock
 	if panelRaw != nil {
 		d.panel.Store(newPanelState(panelRaw, 1, ""))
 	} else {
@@ -815,6 +852,21 @@ func main() {
 	}
 	if *procDir != "" {
 		fmt.Fprintf(os.Stderr, "ktestd: procedures from %s, library %s\n", *procDir, lib.Version)
+	}
+	if lock != nil {
+		// Said at start as well as with each run: an operator learns now, not
+		// at the first run, that no run of this daemon can be accredited.
+		then := "refused"
+		if lock.mark {
+			then = "marked not accredited"
+		}
+		if diffs := lock.daemonDiffs(); len(diffs) > 0 {
+			fmt.Fprintf(os.Stderr, "ktestd: LOCKED by %s, and this daemon %s; every run will be %s\n",
+				*lockPath, diffSentence(*lockPath, diffs), then)
+		} else {
+			fmt.Fprintf(os.Stderr, "ktestd: locked by %s (sha256 %.12s…): runs whose files match are accredited, the rest %s\n",
+				*lockPath, lock.hash, then)
+		}
 	}
 	if dm != nil {
 		if err := dm.declare(w, time.Now()); err != nil {
@@ -2422,7 +2474,7 @@ func (d *daemon) submit(w http.ResponseWriter, r *http.Request, req *request) {
 	case errors.Is(rep.err, errPanelFile):
 		httpError(w, http.StatusInternalServerError, rep.seq, "%v", rep.err)
 	case errors.Is(rep.err, errNoLease), errors.Is(rep.err, errBelowFloor), errors.Is(rep.err, errForbidden),
-		errors.Is(rep.err, errAboveLimit):
+		errors.Is(rep.err, errAboveLimit), errors.Is(rep.err, errLocked):
 		httpError(w, http.StatusForbidden, rep.seq, "%v", rep.err)
 	case errors.Is(rep.err, errProcedure):
 		httpError(w, http.StatusBadRequest, rep.seq, "%v", rep.err)

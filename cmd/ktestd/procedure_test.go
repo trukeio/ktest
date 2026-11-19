@@ -27,21 +27,22 @@ func TestProcRunRecordLayout(t *testing.T) {
 	rec := make([]byte, s.RecordBytes())
 	putUint32(rec[prSeq:], 7)
 	putUint32(rec[prRun:], 3)
-	rec[prEvent], rec[prOutcome], rec[prVia], rec[prState] = runEnd, outcomeCode(procedure.Timeout), 2, 1
+	rec[prEvent], rec[prOutcome], rec[prVia], rec[prState] = runEnd, outcomeCode(procedure.Timeout), 2, 1|2
 	putStr(rec, prTest, 64, "Sweep")
 	putStr(rec, prFile, 64, "ramp.robot")
 	putStr(rec, prHash, 64, strings.Repeat("ab", 32))
 	putStr(rec, prLibrary, 32, lib.Version)
 	putStr(rec, prContract, 64, "")
-	putStr(rec, prMode, 16, "engineering")
+	putStr(rec, prMode, 16, "locked")
+	putStr(rec, prLock, 64, strings.Repeat("cd", 32))
 	putStr(rec, prBy, 32, "rolf")
 	putStr(rec, prWhere, 64, "ramp.robot:12")
 	putStr(rec, prMessage, 160, "'x' did not hold within 2s")
 	got := readBack(t, s, rec)
 	for k, want := range map[string]any{
 		"seq": uint64(7), "run": uint64(3), "event": uint64(runEnd), "outcome": uint64(3), "via": uint64(2),
-		"running": true, "test": "Sweep", "file": "ramp.robot", "hash": strings.Repeat("ab", 32),
-		"library": lib.Version, "contract": "", "mode": "engineering", "by": "rolf", "where": "ramp.robot:12",
+		"running": true, "accredited": true, "lock": strings.Repeat("cd", 32), "test": "Sweep", "file": "ramp.robot", "hash": strings.Repeat("ab", 32),
+		"library": lib.Version, "contract": "", "mode": "locked", "by": "rolf", "where": "ramp.robot:12",
 		"message": "'x' did not hold within 2s",
 	} {
 		if got[k] != want {

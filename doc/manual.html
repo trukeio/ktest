@@ -217,7 +217,7 @@ figure.diagram .a.res { stroke: var(--curve-5); }
     <div class="brand">Ktest <span>user manual</span></div>
     <ol><li class="p"><a href="#part-1"><span class="n">1</span> Using Ktest</a><ol><li><a href="#what-ktest-is"><span class="n">1.1</span><span>What Ktest is</span></a></li><li><a href="#build-install"><span class="n">1.2</span><span>Build and install</span></a></li><li><a href="#first-bench"><span class="n">1.3</span><span>A first bench</span></a></li><li><a href="#the-rack"><span class="n">1.4</span><span>The rack, in a browser</span></a></li><li><a href="#scripts"><span class="n">1.5</span><span>Driving it from scripts</span></a></li><li><a href="#agents"><span class="n">1.6</span><span>With an LLM agent</span></a></li><li><a href="#programs"><span class="n">1.7</span><span>The programs</span></a></li><li><a href="#refusals"><span class="n">1.8</span><span>When ktestd refuses</span></a></li></ol></li>
 <li class="p"><a href="#part-2"><span class="n">2</span> Setting up a bench</a><ol><li><a href="#channels"><span class="n">2.1</span><span>Channels</span></a></li><li><a href="#bus"><span class="n">2.2</span><span>Connecting a bus</span></a></li><li><a href="#instruments"><span class="n">2.3</span><span>Connecting instruments</span></a></li><li><a href="#new-instruments"><span class="n">2.4</span><span>Adding an instrument</span></a></li><li><a href="#limits"><span class="n">2.5</span><span>Limits: <code>limits.json</code></span></a></li><li><a href="#access"><span class="n">2.6</span><span>Access: tokens, roles and TLS</span></a></li><li><a href="#panels"><span class="n">2.7</span><span>Panels: <code>panel.json</code></span></a></li><li><a href="#editing-panels"><span class="n">2.8</span><span>Designing a panel in the rack</span></a></li><li><a href="#the-recording"><span class="n">2.9</span><span>The recording</span></a></li></ol></li>
-<li class="p"><a href="#part-3"><span class="n">3</span> The design</a><ol><li><a href="#four-properties"><span class="n">3.1</span><span>Four properties</span></a></li><li><a href="#control-in-results-out"><span class="n">3.2</span><span>Commands in, results out</span></a></li><li><a href="#safety"><span class="n">3.3</span><span>Safety</span></a></li><li><a href="#timing"><span class="n">3.4</span><span>Timing</span></a></li><li><a href="#waveforms"><span class="n">3.5</span><span>Waveforms</span></a></li><li><a href="#not"><span class="n">3.6</span><span>What Ktest is not</span></a></li><li><a href="#status"><span class="n">3.7</span><span>Status and roadmap</span></a></li></ol></li></ol>
+<li class="p"><a href="#part-3"><span class="n">3</span> The design</a><ol><li><a href="#four-properties"><span class="n">3.1</span><span>Four properties</span></a></li><li><a href="#control-in-results-out"><span class="n">3.2</span><span>Commands in, results out</span></a></li><li><a href="#safety"><span class="n">3.3</span><span>Safety</span></a></li><li><a href="#timing"><span class="n">3.4</span><span>Timing</span></a></li><li><a href="#waveforms"><span class="n">3.5</span><span>Waveforms</span></a></li><li><a href="#two-racks"><span class="n">3.6</span><span>Two racks: master and secondary</span></a></li><li><a href="#not"><span class="n">3.7</span><span>What Ktest is not</span></a></li><li><a href="#status"><span class="n">3.8</span><span>Status and roadmap</span></a></li></ol></li></ol>
   </nav>
 
   <main>
@@ -279,7 +279,7 @@ figure.diagram .a.res { stroke: var(--curve-5); }
         <summary>Contents</summary>
         <nav aria-label="Contents"><ol class="toc"><li class="p"><a href="#part-1"><span class="n">1</span> Using Ktest</a><ol><li><a href="#what-ktest-is"><span class="n">1.1</span><span>What Ktest is</span></a></li><li><a href="#build-install"><span class="n">1.2</span><span>Build and install</span></a></li><li><a href="#first-bench"><span class="n">1.3</span><span>A first bench</span></a></li><li><a href="#the-rack"><span class="n">1.4</span><span>The rack, in a browser</span></a></li><li><a href="#scripts"><span class="n">1.5</span><span>Driving it from scripts</span></a></li><li><a href="#agents"><span class="n">1.6</span><span>With an LLM agent</span></a></li><li><a href="#programs"><span class="n">1.7</span><span>The programs</span></a></li><li><a href="#refusals"><span class="n">1.8</span><span>When ktestd refuses</span></a></li></ol></li>
 <li class="p"><a href="#part-2"><span class="n">2</span> Setting up a bench</a><ol><li><a href="#channels"><span class="n">2.1</span><span>Channels</span></a></li><li><a href="#bus"><span class="n">2.2</span><span>Connecting a bus</span></a></li><li><a href="#instruments"><span class="n">2.3</span><span>Connecting instruments</span></a></li><li><a href="#new-instruments"><span class="n">2.4</span><span>Adding an instrument</span></a></li><li><a href="#limits"><span class="n">2.5</span><span>Limits: <code>limits.json</code></span></a></li><li><a href="#access"><span class="n">2.6</span><span>Access: tokens, roles and TLS</span></a></li><li><a href="#panels"><span class="n">2.7</span><span>Panels: <code>panel.json</code></span></a></li><li><a href="#editing-panels"><span class="n">2.8</span><span>Designing a panel in the rack</span></a></li><li><a href="#the-recording"><span class="n">2.9</span><span>The recording</span></a></li></ol></li>
-<li class="p"><a href="#part-3"><span class="n">3</span> The design</a><ol><li><a href="#four-properties"><span class="n">3.1</span><span>Four properties</span></a></li><li><a href="#control-in-results-out"><span class="n">3.2</span><span>Commands in, results out</span></a></li><li><a href="#safety"><span class="n">3.3</span><span>Safety</span></a></li><li><a href="#timing"><span class="n">3.4</span><span>Timing</span></a></li><li><a href="#waveforms"><span class="n">3.5</span><span>Waveforms</span></a></li><li><a href="#not"><span class="n">3.6</span><span>What Ktest is not</span></a></li><li><a href="#status"><span class="n">3.7</span><span>Status and roadmap</span></a></li></ol></li></ol></nav>
+<li class="p"><a href="#part-3"><span class="n">3</span> The design</a><ol><li><a href="#four-properties"><span class="n">3.1</span><span>Four properties</span></a></li><li><a href="#control-in-results-out"><span class="n">3.2</span><span>Commands in, results out</span></a></li><li><a href="#safety"><span class="n">3.3</span><span>Safety</span></a></li><li><a href="#timing"><span class="n">3.4</span><span>Timing</span></a></li><li><a href="#waveforms"><span class="n">3.5</span><span>Waveforms</span></a></li><li><a href="#two-racks"><span class="n">3.6</span><span>Two racks: master and secondary</span></a></li><li><a href="#not"><span class="n">3.7</span><span>What Ktest is not</span></a></li><li><a href="#status"><span class="n">3.8</span><span>Status and roadmap</span></a></li></ol></li></ol></nav>
       </details>
 
       <details class="conventions">
@@ -553,7 +553,11 @@ $ $K -X DELETE http://ktest/procedures/run        # stop it; its [Teardown] stil
 <p><strong>Keywords.</strong> <code>Log</code>, <code>Fail</code>, <code>Set Variable</code> and <code>Should Be True</code> behave as Robot's do. Ktest's own: <code>Settle    duration</code>; <code>Wait Until    condition    timeout=10s</code>; <code>Read Channel    name</code>; <code>Should Be Within    actual    expected    tolerance</code>; <code>Record Step    point    level    result    threshold=</code>; <code>Stress Apply    psu1.ch1    level    current=</code> and <code>Stress Remove    psu1.ch1</code>.</p>
 <p><strong>Acting.</strong> A run acts through the control plane for the name that started it. The first time it writes an instrument it takes the lease and arms it; it renews the lease while it runs and releases it at the end. Each of these is an ordinary control decision, recorded with <code>via</code> 3 and the starter's name, and held to the same limits and roles. An instrument someone else has leased is refused, and the run fails as <code>refused</code>. A stop disarms the run's instruments like any other's; the run does not arm them again, and its next write is refused.</p>
 <p><strong>Recorded.</strong> <code>procedure.run</code> holds whether a run is under way, which test from which file, and the sha256 of every file it was loaded from. <code>procedure.step</code> has every keyword call at its start and its end, with its arguments as resolved and its outcome (<code>ok</code>, <code>nok</code>, <code>timeout</code>, <code>refused</code>, <code>fail</code>, <code>stopped</code>). <code>procedure.result</code> has what <code>Record Step</code> records. One run is under way at a time, and it survives the client that started it disconnecting.</p>
-<p>Not yet: YAML variable files (JSON works), and the locked mode that refuses a procedure whose files have changed since they were validated.</p>
+<p><strong>Locked mode.</strong> A validated procedure is validated with the daemon that ran it, so a lab under change control starts <code>ktestd</code> with <code>-locked locked.json</code>, a file of the sha256 sums its validated configuration had: the binary, the keyword library's version, <code>limits.json</code>, the instrument configuration (the bus, the DBC file, each <code>-psu</code> and <code>-scope</code> and the poll periods) and every procedure file. Make the file from the configuration that was validated, with the same flags and <code>-lock-hashes</code> added; it is written to stdout, and the daemon exits:</p>
+<pre class="code"><code>$ ktestd -limits limits.json -psu psu1=10.0.0.20:5025,2 -procedures procedures -lock-hashes vcan0 &gt; locked.json
+$ ktestd -limits limits.json -psu psu1=10.0.0.20:5025,2 -procedures procedures -locked locked.json vcan0</code></pre>
+<p>Each run is held to the file when it starts, on the very bytes it was loaded from, its resources and variable files among them. If nothing differs the run is <em>accredited</em>. If anything does, the run is refused with a sentence naming what differs (<code>ramp.robot (sha256 e2d35abea965…, locked 95bc58878ab9…)</code>), or, with <code>"on_mismatch": "mark"</code> in the file, it runs and is recorded as not accredited, with the same sentence. A file the lock does not list counts as differing. <code>procedure.run</code> records <code>mode</code> (<code>locked</code> or <code>engineering</code>), <code>accredited</code>, and <code>lock</code>, the sha256 of the lock file, which is also embedded in the recording. Without <code>-locked</code> the daemon is in engineering mode, and no run is accredited. A daemon whose binary, limits or instruments differ from its lock file says so as it starts, and still records and drives its instruments: only its runs are affected.</p>
+<p>Not yet: YAML variable files (JSON works).</p>
 
 <h2 id="agents">1.6 With an LLM agent</h2>
 <p><span class="st proposed">proposed</span> Nothing in this section is built, and the names in it are placeholders. It describes how an agent is meant to fit, so that the design can be discussed before it is written.</p>
@@ -604,6 +608,8 @@ $ claude mcp add ktest -- ktest-mcp -url https://rack:8443 \
 <tr><td><code>-panel file</code></td><td></td><td>the rack panel: served to the browser, saved to from it, embedded in the recording</td></tr>
 <tr><td><code>-limits file</code></td><td>built in</td><td>the limits to enforce</td></tr>
 <tr><td><code>-procedures dir</code></td><td></td><td>a directory of procedures clients may ask the daemon to run (<a href="#scripts">§1.5</a>)</td></tr>
+<tr><td><code>-locked file</code></td><td>engineering mode</td><td>with <code>-procedures</code>: the sums a validated configuration had; each run is accredited, refused or marked (<a href="#scripts">§1.5</a>)</td></tr>
+<tr><td><code>-lock-hashes</code></td><td></td><td>with <code>-procedures</code>: write the <code>-locked</code> file this configuration would need to stdout, and exit</td></tr>
 <tr><td><code>-contract file</code></td><td></td><td>a DUT contract, <code>dut-interface.json</code>: run its monitors live, as a DUT rack (<a href="#dut-rack">below</a>)</td></tr>
 <tr><td><code>-peer name=https://host:port,token=file,cacert=file,contract=file</code></td><td></td><td>a DUT rack to drive, as a lab rack: its contract checked at start, its monitors mirrored, the rules of <code>limits.json</code> applied (<a href="#lab-rack">below</a>)</td></tr>
 <tr><td><code>-mon-window</code>, <code>-mon-tick</code>, <code>-watermark</code>, <code>-mon-queue</code></td><td>2 ms, 1 ms, 10 ms, 8192</td><td>with <code>-contract</code>: how long a record waits for earlier ones from other clocks; how often the monitors are given the daemon's clock; how often <code>mon.watermark</code> is recorded; how many records may wait for the monitors</td></tr>
@@ -1035,7 +1041,73 @@ $ ktestd -https :8443 -tokens tokens -panel rack.json -psu psu1=192.168.1.20:502
 <p>If the rack's stream cannot keep up, an acquisition is left out of it and recorded as a drop in <code>scope1.acq</code>. The recording on disk still has it.</p>
 <p>Two readings of Siglent's programming guide disagree between its revisions: how a code above 127 becomes negative, and whether the trigger delay shifts the time axis. They are settings (<code>-scope-sign</code>, <code>-scope-trigger-delay</code>), written into every acquisition, until the instrument settles them.</p>
 
-<h2 id="not">3.6 What Ktest is not</h2>
+<h2 id="two-racks">3.6 Two racks: master and secondary</h2>
+<p>When one rig stresses a device and another operates and judges it, Ktest runs two daemons, and one drives the other as an instrument. The lab rack is the <strong>master</strong>: it runs the lab's procedures and applies the stress. The DUT rack is the <strong>secondary</strong> (what other systems call the slave): it powers, operates and watches the device under test, and says how the device behaved.</p>
+<div class="scroll"><table>
+<thead><tr><th>Rack</th><th>Role</th><th>Started with</th><th>Runs</th><th>Changes</th></tr></thead>
+<tbody>
+<tr><td><strong>Lab rack</strong></td><td>master</td><td><code>-peer</code>, <code>-procedures</code>, <code>-locked</code></td><td>the procedures a standard prescribes: climatic, EMC, transients, supply profiles</td><td>rarely, under the lab's change control</td></tr>
+<tr><td><strong>DUT rack</strong></td><td>secondary</td><td><code>-contract</code></td><td>the DUT's modes and actions, and the monitors that judge its functions</td><td>with each DUT</td></tr>
+</tbody>
+</table></div>
+<p>Two processes, not one, because each side is validated on its own. A new DUT changes the secondary and its contract; the master's validated procedures, binary and limits stay as they were.</p>
+<figure class="diagram"><div class="scroll-x"><svg viewBox="0 0 760 330" role="img" aria-labelledby="tr-title">
+<title id="tr-title">Two racks. The lab rack, the master, runs procedures, a peer driver and daemon rules, and drives the stress instruments. The DUT rack, the secondary, holds the contract, runs modes and actions, and evaluates monitors over the DUT. Commands go from master to secondary over REST; results come back on the subscription stream. The stress instruments act on the DUT.</title>
+<rect class="outer" x="20" y="8" width="290" height="222" rx="7"/>
+<text class="t" x="34" y="30" text-anchor="start">Lab rack · master</text>
+<rect class="b" x="40" y="46" width="250" height="48" rx="5"/><text class="t" x="165" y="66">Procedures</text><text class="s" x="165" y="83">the lab's, validated and locked</text>
+<rect class="b" x="40" y="106" width="250" height="48" rx="5"/><text class="t" x="165" y="126">Peer driver</text><text class="s" x="165" y="143">lease, mirror, clock offset</text>
+<rect class="b" x="40" y="166" width="250" height="48" rx="5"/><text class="t" x="165" y="186">Daemon rules</text><text class="s" x="165" y="203">remove the stress on loss or abort</text>
+<rect class="outer" x="450" y="8" width="290" height="222" rx="7"/>
+<text class="t" x="464" y="30" text-anchor="start">DUT rack · secondary</text>
+<rect class="b" x="470" y="46" width="250" height="48" rx="5"/><text class="t" x="595" y="66">Contract</text><text class="s" x="595" y="83">dut-interface.json, a copy on each side</text>
+<rect class="b" x="470" y="106" width="250" height="48" rx="5"/><text class="t" x="595" y="126">Modes and actions</text><text class="s" x="595" y="143">keywords of the contract's resource</text>
+<rect class="b" x="470" y="166" width="250" height="48" rx="5"/><text class="t" x="595" y="186">Monitors</text><text class="s" x="595" y="203">ok, dev, unknown; a watermark</text>
+<defs><marker id="tr-cmd" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/></marker><marker id="tr-res" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--curve-5)"/></marker><marker id="tr-n" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--muted)"/></marker><marker id="tr-n-s" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" fill="var(--muted)"/></marker></defs>
+<line class="a cmd" x1="311" y1="112" x2="448" y2="112" marker-end="url(#tr-cmd)"/>
+<text class="l cmd" x="318" y="104">commands · REST</text>
+<text class="l cmd" x="318" y="127">lease, mode, actions, clock</text>
+<line class="a res" x1="449" y1="150" x2="312" y2="150" marker-end="url(#tr-res)"/>
+<text class="l res" x="318" y="142">results · /stream/sub</text>
+<text class="l res" x="318" y="166">monitors, watermark, mode</text>
+<rect class="b ext" x="40" y="268" width="250" height="48" rx="5"/><text class="t" x="165" y="288">Stress instruments</text><text class="s" x="165" y="305">supplies; climatic, EMC planned</text>
+<rect class="b ext" x="470" y="268" width="250" height="48" rx="5"/><text class="t" x="595" y="288">DUT</text><text class="s" x="595" y="305">on the DUT rack's own bus</text>
+<line class="a n" x1="165" y1="231" x2="165" y2="267" marker-end="url(#tr-n)" marker-start="url(#tr-n-s)"/>
+<line class="a n" x1="595" y1="231" x2="595" y2="267" marker-end="url(#tr-n)" marker-start="url(#tr-n-s)"/>
+<line class="a n" x1="291" y1="292" x2="468" y2="292" marker-end="url(#tr-n)" style="stroke-dasharray:5 3"/>
+<text class="l" x="330" y="285" style="fill:var(--muted)">the stress, physically</text>
+</svg></div><figcaption>The master reaches the secondary only through the contract: commands by REST, results on the subscription stream. The stress reaches the DUT through the bench, not through Ktest.</figcaption></figure>
+
+<h3>The contract is the whole interface</h3>
+<p><code>dut-interface.json</code> declares what the master may name: the DUT's <strong>modes</strong>, its <strong>actions</strong> and its <strong>monitors</strong>. The master never sends raw frames to the DUT and never reads the secondary's other channels. Both racks hold a copy, and the master refuses to start unless the secondary's is the same, byte for byte, its resource file included. A procedure that names a mode, action or monitor the contract lacks is refused when it loads. Every run records the contract's sha256.</p>
+
+<h3>Commands in, results out, between racks</h3>
+<p>The rule of <a href="#control-in-results-out">§3.2</a> holds between the racks too. The master holds the secondary's <code>dut</code> lease like any client and changes modes or runs actions by REST; the answer is accepted or refused. What happened arrives on <code>/stream/sub</code>: one record per frame, sent the moment it is written, 4.8 ms after its sample at the 99th percentile on loopback.</p>
+<p>The stream carries a <strong>watermark</strong>: every monitor transition up to time T has been sent. Silence alone never means the DUT was fine. <code>DUT Evaluate</code> waits until the watermark has passed the end of its window before it answers <code>ok</code>.</p>
+
+<h3>The secondary judges, the master decides</h3>
+<p>Monitors are expressions over the DUT's signals, evaluated on the secondary, next to the DUT and on its clock. The master mirrors their states into its own recording as <code>dut.mon.*</code>, and its keywords (<code>Verify Baseline</code>, <code>Classify Recovery</code>, <code>Threshold Search</code>) turn them into verdicts. The two clocks are tied by an offset the master estimates once a second, with its uncertainty, and a window is widened by that uncertainty so that a deviation at its edge counts against the DUT.</p>
+
+<h3>When the link fails</h3>
+<div class="scroll"><table>
+<thead><tr><th>Event</th><th>Master</th><th>Secondary</th></tr></thead>
+<tbody>
+<tr><td>link down, or watermark older than <code>watermark_age</code></td><td>rule <code>monitoring_lost</code>: the stress is removed, the run fails <code>link_lost</code></td><td>the DUT keeps running in its mode</td></tr>
+<tr><td><code>abort</code> monitor <code>dev</code></td><td>rule <code>dut_abort</code>: the stress is removed, the run fails</td><td>keeps judging</td></tr>
+<tr><td>master's lease lapses</td><td></td><td><code>dut</code> stays armed; the cyclic frames its modes started go on</td></tr>
+</tbody>
+</table></div>
+<p>The rules are in the master's <code>limits.json</code>, read at start and beyond any client's reach. Measured with <code>examples/two-racks</code>: a killed secondary had the stress removed 3.4 ms later, a frozen one 102 ms later, and an <code>abort</code> 0.6 ms after the master received it. A run that lost its link is not resumed; a new run starts.</p>
+
+<h3>Each side keeps its own validation</h3>
+<ul>
+<li><strong>Master:</strong> <code>-locked</code> holds every run to the sums of its binary, library, limits, instruments and procedure files, and records it as accredited or not (<a href="#scripts">§1.5</a>).</li>
+<li><strong>Secondary:</strong> the contract's sha256 is in both recordings, and <code>monitor-check -live</code> replays the secondary's recording through the same monitors to the nanosecond.</li>
+<li><strong>Between them:</strong> <code>logbcheck -judgements</code> recomputes every answer the monitors gave a keyword from the mirrored states.</li>
+</ul>
+<p>The flags and streams of each side are in <a href="#dut-rack">§1.7, a DUT rack</a> and <a href="#lab-rack">a lab rack</a>. <code>examples/two-racks/demo.sh</code> runs both on one machine with a simulated DUT and supply.</p>
+
+<h2 id="not">3.7 What Ktest is not</h2>
 <ul>
 <li><strong>Not a production end-of-line system.</strong> No operator mode, no yield reporting, no shop-floor integration.</li>
 <li><strong>Not an IDE, a report generator or a requirements tool.</strong></li>
@@ -1044,7 +1116,7 @@ $ ktestd -https :8443 -tokens tokens -panel rack.json -psu psu1=192.168.1.20:502
 <li><strong>Not automotive Ethernet.</strong> That is a separate project.</li>
 </ul>
 
-<h2 id="status">3.7 Status and roadmap</h2>
+<h2 id="status">3.8 Status and roadmap</h2>
 <p>Ktest is built in milestones, each usable alone. This manual describes the whole; this table says how much of it exists (<code>ktestd 0.4</code>).</p>
 <div class="scroll"><table>
 <thead><tr><th></th><th>Milestone</th><th>Status</th></tr></thead>
@@ -1058,7 +1130,7 @@ $ ktestd -https :8443 -tokens tokens -panel rack.json -psu psu1=192.168.1.20:502
 <tr><td></td><td>Two racks: DUT monitors live, the subscription stream, DUT modes and actions</td><td><span class="st built">built</span></td></tr>
 <tr><td></td><td>Two racks: the peer driver and the daemon rules</td><td><span class="st built">built</span></td></tr>
 <tr><td></td><td>Two racks: DUT keywords for the master's procedures</td><td><span class="st built">built</span></td></tr>
-<tr><td></td><td>Locked mode</td><td><span class="st planned">planned</span></td></tr>
+<tr><td></td><td>Locked mode</td><td><span class="st built">built</span></td></tr>
 <tr><td></td><td>Replay in the rack; packaging as a service; more instrument kinds and dialects by configuration; USBTMC</td><td><span class="st planned">planned</span></td></tr>
 <tr><td></td><td>Several buses; LIN; ISO-TP; J1939</td><td><span class="st planned">planned</span></td></tr>
 <tr><td></td><td>The agent tool server</td><td><span class="st proposed">proposed</span></td></tr>

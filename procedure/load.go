@@ -36,8 +36,13 @@ type Suite struct {
 	// they were read, each preceded by its path relative to the main file.
 	Hash  string
 	Files []string
-	Lib   *Library
-	Doc   string
+	// Sums is the sha256 of each of Files, hex, by the same relative path:
+	// what a locked daemon holds each file to (handoff §4.9). They are sums
+	// of the bytes that were parsed, so nothing can change between the check
+	// and the run.
+	Sums map[string]string
+	Lib  *Library
+	Doc  string
 
 	env   Env
 	tests []*Block
@@ -86,7 +91,7 @@ func load(path string, env Env, resource bool) (*Suite, error) {
 		env.Lib = NewLibrary("")
 	}
 	s := &Suite{Path: path, Lib: env.Lib, env: env, kws: map[string]*Block{}, vars: map[string]Value{},
-		cells: map[string]*cell{}}
+		cells: map[string]*cell{}, Sums: map[string]string{}}
 	h := sha256.New()
 	base := filepath.Dir(path)
 	seen := map[string]bool{}
@@ -96,6 +101,8 @@ func load(path string, env Env, resource bool) (*Suite, error) {
 			rel = p
 		}
 		s.Files = append(s.Files, rel)
+		sum := sha256.Sum256(b)
+		s.Sums[rel] = hex.EncodeToString(sum[:])
 		fmt.Fprintf(h, "%s\x00%d\x00", filepath.ToSlash(rel), len(b))
 		h.Write(b)
 	}

@@ -83,19 +83,25 @@ type procs struct {
 	// contract is the sha256 of the DUT contract the daemon runs, which every
 	// run records; "" for none.
 	contract string
+
+	// lock is -locked: every run is held to it when it starts. nil is
+	// engineering mode, where no run is accredited.
+	lock *locked
 }
 
 // procRun is the run under way.
 type procRun struct {
-	n      uint32
-	who    caller
-	test   string
-	file   string
-	hash   string
-	stop   context.CancelFunc
-	leases map[string]string // instrument -> lease token, for what the run has leased
-	armed  map[string]bool
-	mu     sync.Mutex
+	n    uint32
+	who  caller
+	test string
+	file string
+	hash string
+	stop context.CancelFunc
+	// accredited: the run was held to the lock and nothing differed.
+	accredited bool
+	leases     map[string]string // instrument -> lease token, for what the run has leased
+	armed      map[string]bool
+	mu         sync.Mutex
 
 	// cause is why a daemon rule ended the run, nil when none did.
 	cause *runCause
@@ -189,6 +195,15 @@ func (p *procs) start(w http.ResponseWriter, r *http.Request) {
 			loadErr = fmt.Errorf("%w: %v", errProcedure, loadErr)
 		}
 	}
+	// A locked daemon holds the run to its sums now, on the bytes that were
+	// loaded: what differs refuses the run, or marks it.
+	var diffs []string
+	if loadErr == nil && p.lock != nil {
+		diffs = p.lock.check(body.File, suite)
+		if len(diffs) > 0 && !p.lock.mark {
+			loadErr = fmt.Errorf("%w: %s is refused: it %s", errLocked, body.File, diffSentence(p.lock.path, diffs))
+		}
+	}
 	p.d.submit(w, r, &request{kind: reqJob, job: func(l *loop, t time.Time, seq uint32) reply {
 		if loadErr != nil {
 			p.mu.Lock()
@@ -208,9 +223,14 @@ func (p *procs) start(w http.ResponseWriter, r *http.Request) {
 		p.n++
 		ctx, stop := context.WithCancel(p.hard)
 		run := &procRun{n: p.n, who: who, test: body.Test, file: body.File, hash: suite.Hash, stop: stop,
-			leases: map[string]string{}, armed: map[string]bool{}}
+			accredited: p.lock != nil && len(diffs) == 0,
+			leases:     map[string]string{}, armed: map[string]bool{}}
 		p.cur = run
-		p.record(l, t, procEvent{seq: seq, run: run.n, event: runStart, who: who})
+		ev := procEvent{seq: seq, run: run.n, event: runStart, who: who}
+		if len(diffs) > 0 {
+			ev.msg = "not accredited: it " + diffSentence(p.lock.path, diffs)
+		}
+		p.record(l, t, ev)
 		go p.execute(ctx, run, suite)
 		return reply{seq: seq}
 	}})
@@ -447,9 +467,9 @@ func (a *rackAdapter) Result(sr lib.StepResult) {
 // The procedure streams' record layouts, in bytes.
 //
 // procedure.run: t 0–7, seq 8–11, run 12–15, event 16, outcome 17, via 18,
-// state 19 (running bit 0), test 20–83, file 84–147, hash 148–211,
-// library 212–243, contract 244–307, mode 308–323, by 324–355,
-// where 356–419, message 420–579.
+// state 19 (running bit 0, accredited bit 1), test 20–83, file 84–147,
+// hash 148–211, library 212–243, contract 244–307, mode 308–323, by 324–355,
+// where 356–419, message 420–579, lock 580–643.
 const (
 	prSeq      = 8
 	prRun      = 12
@@ -466,7 +486,8 @@ const (
 	prBy       = prMode + 16
 	prWhere    = prBy + record.HolderMax
 	prMessage  = prWhere + 64
-	prBytes    = prMessage + 160
+	prLock     = prMessage + 160
+	prBytes    = prLock + 64
 )
 
 // procedure.step: t 0–7, run 8–11, id 12–15, parent 16–19, event 20,
@@ -542,12 +563,15 @@ func procRunSchema() *logb.Schema {
 		uintF("via", prVia, 8, "", "the listener the request came through: 1 the local socket, 2 TLS; 0 for an end"),
 		holdF(logb.Field{Name: "running", BitOffset: 8 * prState, BitWidth: 1, Type: logb.TypeBool,
 			Desc: "a run is under way"}),
+		holdF(logb.Field{Name: "accredited", BitOffset: 8*prState + 1, BitWidth: 1, Type: logb.TypeBool,
+			Desc: "the run was held to the locked sums and nothing differed; never in engineering mode"}),
 		holdF(strF("test", prTest, 64, "the test case run")),
 		holdF(strF("file", prFile, 64, "the procedure file, relative to the procedures directory")),
 		holdF(strF("hash", prHash, 64, "sha256 of every file the procedure was loaded from, hex")),
 		holdF(strF("library", prLibrary, 32, "the keyword library's version")),
 		holdF(strF("contract", prContract, 64, "sha256 of the DUT contract; empty for a run with none")),
 		holdF(strF("mode", prMode, 16, "locked or engineering (handoff §4.9)")),
+		holdF(strF("lock", prLock, 64, "sha256 of the -locked file the run was held to; empty in engineering mode")),
 		strF("by", prBy, record.HolderMax, "the name that asked; empty on the local socket and for an end"),
 		strF("where", prWhere, 64, "where the run failed, file:line"),
 		strF("message", prMessage, 160, "why a run failed or was refused"),
@@ -648,13 +672,21 @@ func (p *procs) record(l *loop, t time.Time, e procEvent) {
 			rec[prState] = 1
 		}
 		if state != nil {
+			if state.accredited {
+				rec[prState] |= 2
+			}
 			putStr(rec, prTest, 64, state.test)
 			putStr(rec, prFile, 64, state.file)
 			putStr(rec, prHash, 64, state.hash)
 		}
 		putStr(rec, prLibrary, 32, lib.Version)
 		putStr(rec, prContract, 64, p.contract)
-		putStr(rec, prMode, 16, "engineering")
+		if p.lock != nil {
+			putStr(rec, prMode, 16, "locked")
+			putStr(rec, prLock, 64, p.lock.hash)
+		} else {
+			putStr(rec, prMode, 16, "engineering")
+		}
 		putStr(rec, prWhere, 64, e.where)
 		putStr(rec, prMessage, 160, e.msg)
 	})
