@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc --noEmit && vite build",
-    "test": "node --test test/"
+    "test": "go test -count=1 ."
   },
   "dependencies": {
     "gridstack": "^13.3.0",
