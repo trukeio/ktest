@@ -13,7 +13,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/rveen/ktest/can"
+	"github.com/trukeio/ktest/can"
 )
 
 // eintrs accumulates the interrupted-and-retried receives of every socket this

@@ -15,11 +15,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rveen/logb"
+	"github.com/trukeio/logb"
 
-	"github.com/rveen/ktest/channel"
-	"github.com/rveen/ktest/procedure/lib"
-	"github.com/rveen/ktest/record"
+	"github.com/trukeio/ktest/channel"
+	"github.com/trukeio/ktest/procedure/lib"
+	"github.com/trukeio/ktest/record"
 )
 
 // The daemon as a validated configuration had it, in these tests.

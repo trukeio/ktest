@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/rveen/logb"
+	"github.com/trukeio/logb"
 
-	"github.com/rveen/ktest/monitor"
-	"github.com/rveen/ktest/record"
+	"github.com/trukeio/ktest/monitor"
+	"github.com/trukeio/ktest/record"
 )
 
 // The rules are refused, with a sentence, wherever they would do nothing or

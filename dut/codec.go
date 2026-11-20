@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"fmt"
 
-	"github.com/rveen/logb/dbc"
+	"github.com/trukeio/logb/dbc"
 )
 
 // Codec is the DUT's frames, as DBC lays them out: the two it sends and the

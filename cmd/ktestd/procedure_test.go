@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rveen/ktest/channel"
-	"github.com/rveen/ktest/expr"
-	"github.com/rveen/ktest/monitor"
-	"github.com/rveen/ktest/procedure"
-	"github.com/rveen/ktest/procedure/lib"
+	"github.com/trukeio/ktest/channel"
+	"github.com/trukeio/ktest/expr"
+	"github.com/trukeio/ktest/monitor"
+	"github.com/trukeio/ktest/procedure"
+	"github.com/trukeio/ktest/procedure/lib"
 )
 
 // The procedure streams' layouts are offsets written in one place and read

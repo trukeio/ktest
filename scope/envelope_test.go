@@ -5,8 +5,8 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/rveen/logb/viewer/decimate"
-	"github.com/rveen/logb/viewer/index"
+	"github.com/trukeio/logb/viewer/decimate"
+	"github.com/trukeio/logb/viewer/index"
 )
 
 // series is the acquisition as viewer/decimate wants it: every sample as a

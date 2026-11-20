@@ -17,7 +17,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/rveen/ktest/psu"
+	"github.com/trukeio/ktest/psu"
 )
 
 func main() {

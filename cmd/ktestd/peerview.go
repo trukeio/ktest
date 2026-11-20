@@ -12,10 +12,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/rveen/ktest/channel"
-	"github.com/rveen/ktest/monitor"
-	"github.com/rveen/ktest/peer"
-	"github.com/rveen/ktest/procedure"
+	"github.com/trukeio/ktest/channel"
+	"github.com/trukeio/ktest/monitor"
+	"github.com/trukeio/ktest/peer"
+	"github.com/trukeio/ktest/procedure"
 )
 
 // # The DUT, as the master's procedures see it

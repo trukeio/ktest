@@ -31,11 +31,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/rveen/logb"
-	"github.com/rveen/logb/dbc"
+	"github.com/trukeio/logb"
+	"github.com/trukeio/logb/dbc"
 
-	"github.com/rveen/ktest/can"
-	"github.com/rveen/ktest/record"
+	"github.com/trukeio/ktest/can"
+	"github.com/trukeio/ktest/record"
 )
 
 func TestReaderAgreesWithGo(t *testing.T) {

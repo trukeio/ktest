@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rveen/logb"
+	"github.com/trukeio/logb"
 
-	dso "github.com/rveen/ktest/scope"
+	dso "github.com/trukeio/ktest/scope"
 )
 
 // The scope's record layouts are byte offsets written in one place and read in

@@ -54,11 +54,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/rveen/logb"
-	"github.com/rveen/logb/dbc"
-	"github.com/rveen/logb/viewer/index"
+	"github.com/trukeio/logb"
+	"github.com/trukeio/logb/dbc"
+	"github.com/trukeio/logb/viewer/index"
 
-	"github.com/rveen/ktest/can"
+	"github.com/trukeio/ktest/can"
 )
 
 // writer is the part of logb.Writer this package uses. It exists so that an

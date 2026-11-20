@@ -34,13 +34,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/rveen/logb"
-	"github.com/rveen/logb/dbc"
+	"github.com/trukeio/logb"
+	"github.com/trukeio/logb/dbc"
 	"golang.org/x/sys/unix"
 
-	"github.com/rveen/ktest/can"
-	"github.com/rveen/ktest/record"
-	"github.com/rveen/ktest/stream"
+	"github.com/trukeio/ktest/can"
+	"github.com/trukeio/ktest/record"
+	"github.com/trukeio/ktest/stream"
 )
 
 // version is what the recording says wrote it. §11: a measurement from 2027

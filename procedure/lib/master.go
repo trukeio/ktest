@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rveen/ktest/expr"
-	"github.com/rveen/ktest/procedure"
+	"github.com/trukeio/ktest/expr"
+	"github.com/trukeio/ktest/procedure"
 )
 
 // Peer is what the master's DUT keywords need of the daemon: the DUT rack

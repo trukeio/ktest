@@ -16,11 +16,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rveen/logb"
+	"github.com/trukeio/logb"
 
-	"github.com/rveen/ktest/can"
-	"github.com/rveen/ktest/record"
-	"github.com/rveen/ktest/stream"
+	"github.com/trukeio/ktest/can"
+	"github.com/trukeio/ktest/record"
+	"github.com/trukeio/ktest/stream"
 )
 
 // rack serves h over TLS and returns a client for it.

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/rveen/logb"
+	"github.com/trukeio/logb"
 )
 
 // This file is the waveform half of the package: streams whose records are

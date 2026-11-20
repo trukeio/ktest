@@ -5,7 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 
-	"github.com/rveen/logb"
+	"github.com/trukeio/logb"
 )
 
 // panelRec is one save of the rack's panel, as rack.panel records it, with

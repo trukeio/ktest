@@ -17,13 +17,13 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/rveen/logb"
+	"github.com/trukeio/logb"
 
-	"github.com/rveen/ktest/channel"
-	"github.com/rveen/ktest/expr"
-	"github.com/rveen/ktest/procedure"
-	"github.com/rveen/ktest/procedure/lib"
-	"github.com/rveen/ktest/record"
+	"github.com/trukeio/ktest/channel"
+	"github.com/trukeio/ktest/expr"
+	"github.com/trukeio/ktest/procedure"
+	"github.com/trukeio/ktest/procedure/lib"
+	"github.com/trukeio/ktest/record"
 )
 
 // # Procedures

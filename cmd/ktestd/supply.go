@@ -12,10 +12,10 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/rveen/logb"
+	"github.com/trukeio/logb"
 
-	"github.com/rveen/ktest/psu"
-	"github.com/rveen/ktest/record"
+	"github.com/trukeio/ktest/psu"
+	"github.com/trukeio/ktest/record"
 )
 
 // A supply is one bench supply as the daemon drives it: a goroutine that owns

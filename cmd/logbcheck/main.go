@@ -101,7 +101,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rveen/logb"
+	"github.com/trukeio/logb"
 )
 
 func main() {

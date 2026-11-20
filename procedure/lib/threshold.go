@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/rveen/ktest/expr"
-	"github.com/rveen/ktest/procedure"
+	"github.com/trukeio/ktest/expr"
+	"github.com/trukeio/ktest/procedure"
 )
 
 func mustUnit(s string) expr.Unit { return expr.ParseUnit(s) }

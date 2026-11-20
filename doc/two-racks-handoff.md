@@ -69,7 +69,7 @@ Adjustments taken with them:
 
 | Fact | Where |
 |---|---|
-| Module path `github.com/rveen/ktest`; Go 1.25; Logb checked out at `../logb` | `go.mod` |
+| Module path `github.com/trukeio/ktest`; Go 1.25; Logb checked out at `../logb` | `go.mod` |
 | Single event loop: requests, BCM events, supply and scope events, a 200 ms flush tick | `cmd/ktestd/main.go`, `type loop`, `loop.run` |
 | Leases, arming, limits, control decisions recorded as records | `loop.handle`, `loop.admit`, `loop.record`, `record/` |
 | Live fan-out of recorder bytes, backpressure, disconnecting slow consumers | `stream/hub.go` (`Hub.Write`, `Hub.Subscribe`), `stream/http.go` |

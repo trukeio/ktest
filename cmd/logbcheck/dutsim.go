@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rveen/logb"
+	"github.com/trukeio/logb"
 
-	"github.com/rveen/ktest/dut"
+	"github.com/trukeio/ktest/dut"
 )
 
 // The DUT check (-dutsim) holds a lab rack's verdicts on a DUT to the DUT's

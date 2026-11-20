@@ -13,8 +13,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/rveen/ktest/expr"
-	"github.com/rveen/ktest/procedure"
+	"github.com/trukeio/ktest/expr"
+	"github.com/trukeio/ktest/procedure"
 )
 
 // Version is the library's version, recorded with every run. It changes

@@ -9,12 +9,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/rveen/logb/dbc"
+	"github.com/trukeio/logb/dbc"
 
-	"github.com/rveen/ktest/dut"
-	"github.com/rveen/ktest/expr"
-	"github.com/rveen/ktest/monitor"
-	"github.com/rveen/ktest/procedure"
+	"github.com/trukeio/ktest/dut"
+	"github.com/trukeio/ktest/expr"
+	"github.com/trukeio/ktest/monitor"
+	"github.com/trukeio/ktest/procedure"
 )
 
 const testContract = `{

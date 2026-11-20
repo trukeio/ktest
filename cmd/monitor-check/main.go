@@ -36,11 +36,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rveen/logb"
+	"github.com/trukeio/logb"
 
-	"github.com/rveen/ktest/channel"
-	"github.com/rveen/ktest/expr"
-	"github.com/rveen/ktest/monitor"
+	"github.com/trukeio/ktest/channel"
+	"github.com/trukeio/ktest/expr"
+	"github.com/trukeio/ktest/monitor"
 )
 
 func main() {

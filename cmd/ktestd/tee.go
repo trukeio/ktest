@@ -5,10 +5,10 @@ package main
 import (
 	"time"
 
-	"github.com/rveen/logb"
+	"github.com/trukeio/logb"
 
-	"github.com/rveen/ktest/can"
-	"github.com/rveen/ktest/record"
+	"github.com/trukeio/ktest/can"
+	"github.com/trukeio/ktest/record"
 )
 
 // tee writes every record three times: to the recording, to the rack's

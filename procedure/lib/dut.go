@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rveen/ktest/procedure"
+	"github.com/trukeio/ktest/procedure"
 )
 
 // DUTVersion is the DUT rack's library's version, recorded with every action.

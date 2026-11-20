@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/rveen/ktest/expr"
+	"github.com/trukeio/ktest/expr"
 )
 
 // TeardownTimeout bounds a [Teardown] that runs after the run was stopped or

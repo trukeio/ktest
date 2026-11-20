@@ -226,20 +226,20 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/rveen/logb"
-	"github.com/rveen/logb/dbc"
+	"github.com/trukeio/logb"
+	"github.com/trukeio/logb/dbc"
 	"golang.org/x/sys/unix"
 
-	"github.com/rveen/ktest/can"
-	"github.com/rveen/ktest/channel"
-	"github.com/rveen/ktest/monitor"
-	"github.com/rveen/ktest/peer"
-	"github.com/rveen/ktest/procedure/lib"
-	"github.com/rveen/ktest/psu"
-	"github.com/rveen/ktest/record"
-	dso "github.com/rveen/ktest/scope"
-	"github.com/rveen/ktest/stream"
-	"github.com/rveen/ktest/web"
+	"github.com/trukeio/ktest/can"
+	"github.com/trukeio/ktest/channel"
+	"github.com/trukeio/ktest/monitor"
+	"github.com/trukeio/ktest/peer"
+	"github.com/trukeio/ktest/procedure/lib"
+	"github.com/trukeio/ktest/psu"
+	"github.com/trukeio/ktest/record"
+	dso "github.com/trukeio/ktest/scope"
+	"github.com/trukeio/ktest/stream"
+	"github.com/trukeio/ktest/web"
 )
 
 // version is what the recording says wrote it (§11).

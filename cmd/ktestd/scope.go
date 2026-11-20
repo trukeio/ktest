@@ -12,10 +12,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rveen/logb"
+	"github.com/trukeio/logb"
 
-	"github.com/rveen/ktest/record"
-	dso "github.com/rveen/ktest/scope"
+	"github.com/trukeio/ktest/record"
+	dso "github.com/trukeio/ktest/scope"
 )
 
 // A scopeDriver is one oscilloscope as the daemon drives it: a goroutine that

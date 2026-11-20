@@ -12,13 +12,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/rveen/logb"
+	"github.com/trukeio/logb"
 
-	"github.com/rveen/ktest/channel"
-	"github.com/rveen/ktest/monitor"
-	"github.com/rveen/ktest/peer"
-	"github.com/rveen/ktest/procedure"
-	"github.com/rveen/ktest/record"
+	"github.com/trukeio/ktest/channel"
+	"github.com/trukeio/ktest/monitor"
+	"github.com/trukeio/ktest/peer"
+	"github.com/trukeio/ktest/procedure"
+	"github.com/trukeio/ktest/record"
 )
 
 // # The master's peer

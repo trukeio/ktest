@@ -16,17 +16,17 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/rveen/logb"
-	"github.com/rveen/logb/dbc"
+	"github.com/trukeio/logb"
+	"github.com/trukeio/logb/dbc"
 	"golang.org/x/sys/unix"
 
-	"github.com/rveen/ktest/can"
-	"github.com/rveen/ktest/channel"
-	"github.com/rveen/ktest/expr"
-	"github.com/rveen/ktest/monitor"
-	"github.com/rveen/ktest/procedure"
-	"github.com/rveen/ktest/procedure/lib"
-	"github.com/rveen/ktest/record"
+	"github.com/trukeio/ktest/can"
+	"github.com/trukeio/ktest/channel"
+	"github.com/trukeio/ktest/expr"
+	"github.com/trukeio/ktest/monitor"
+	"github.com/trukeio/ktest/procedure"
+	"github.com/trukeio/ktest/procedure/lib"
+	"github.com/trukeio/ktest/record"
 )
 
 // # Modes and actions

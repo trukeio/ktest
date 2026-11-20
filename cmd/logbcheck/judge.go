@@ -8,7 +8,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/rveen/logb"
+	"github.com/trukeio/logb"
 )
 
 // The judgement check (-judgements) replays a lab rack's verdicts on a DUT

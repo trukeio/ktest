@@ -19,7 +19,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/rveen/ktest/record"
+	"github.com/trukeio/ktest/record"
 )
 
 // role is what an authenticated name may do.

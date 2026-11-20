@@ -3,7 +3,7 @@
 Status: draft, for discussion. Milestones 1 to 3 are built, and so are the
 first two of milestone 4's three slices (§12); of §6–§13, only what §12 records
 as built is committed. §5 is settled too: all three Logb changes are implemented and pushed
-(`rveen/logb@ae8308d`), along with the viewer work that makes §5.1 visible
+(`trukeio/logb@ae8308d`), along with the viewer work that makes §5.1 visible
 (`@b8cf4cc`), and that section now records what was decided rather than what was
 proposed. The SocketCAN figures in §8, §10.5 and §12 are measured on `vcan`, not
 estimated.

@@ -12,13 +12,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rveen/logb"
-	"github.com/rveen/logb/dbc"
+	"github.com/trukeio/logb"
+	"github.com/trukeio/logb/dbc"
 
-	"github.com/rveen/ktest/channel"
-	"github.com/rveen/ktest/monitor"
-	"github.com/rveen/ktest/record"
-	"github.com/rveen/ktest/stream"
+	"github.com/trukeio/ktest/channel"
+	"github.com/trukeio/ktest/monitor"
+	"github.com/trukeio/ktest/record"
+	"github.com/trukeio/ktest/stream"
 )
 
 // # The DUT rack

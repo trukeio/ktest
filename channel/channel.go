@@ -19,9 +19,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/rveen/logb"
+	"github.com/trukeio/logb"
 
-	"github.com/rveen/ktest/expr"
+	"github.com/trukeio/ktest/expr"
 )
 
 // Ref is what a channel name resolves to.

@@ -9,7 +9,7 @@ done by three unrelated tools:
 - **Bench work.** Programmable supplies and oscilloscopes over SCPI. DMMs,
   loads and function generators are planned.
 - **Recording.** Everything above goes onto one timeline, in one open format,
-  [Logb](https://github.com/rveen/logb).
+  [Logb](https://github.com/trukeio/logb).
 
 Having all three in one place is the reason the project exists. Bus tools do not
 see the bench, and bench software does not see the bus, so today a supply
@@ -84,7 +84,7 @@ directly, so it only builds on Linux.
 this repository:
 
 ```sh
-git clone https://github.com/rveen/logb ../logb
+git clone https://github.com/trukeio/logb ../logb
 go build ./...
 go test ./...
 ```

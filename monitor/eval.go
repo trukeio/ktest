@@ -6,7 +6,7 @@ import (
 	"slices"
 	"sort"
 
-	"github.com/rveen/ktest/expr"
+	"github.com/trukeio/ktest/expr"
 )
 
 // State is a monitor's state.

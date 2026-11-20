@@ -355,10 +355,11 @@ figure.diagram .a.res { stroke: var(--curve-5); }
 <h2 id="build-install">1.2 Build and install</h2>
 <p>Ktest is written in Go and has no C dependencies. The rack's browser code is committed already built and is embedded in the binary, so Node is not needed to build or run it.</p>
 <h3>From source <span class="st built">today</span></h3>
-<p>You need Linux, Go 1.25 or later, and the Logb repository checked out beside Ktest's, because Logb has no tagged release yet and <code>go.mod</code> points at <code>../logb</code>:</p>
-<pre class="code"><code>$ git clone https://github.com/rveen/logb
-$ git clone https://github.com/rveen/ktest
-$ cd ktest
+<p>You need Linux, Go 1.25 or later, and the Logb repository checked out in the GOPATH layout next to Ktest's, because Logb has no tagged release yet and <code>go.mod</code> points at <code>../logb</code>:</p>
+<pre class="code"><code>$ mkdir -p ~/go/src/github.com/rveen ~/go/src/github.com/trukeio
+$ git clone https://github.com/trukeio/logb ~/go/src/github.com/trukeio/logb
+$ git clone https://github.com/trukeio/ktest ~/go/src/github.com/trukeio/ktest
+$ cd ~/go/src/github.com/trukeio/ktest
 $ go build -o bin/ ./cmd/...
 $ ls bin
 canlogb  dutsim  ktestd  logbcheck  monitor-check  psusim  scopesim  vcanprobe</code></pre>
@@ -962,7 +963,7 @@ $ ktestd -https :8443 -tokens tokens -panel rack.json -psu psu1=192.168.1.20:502
 </ul>
 
 <h2 id="the-recording">2.9 The recording</h2>
-<p>The recording is a <a href="https://github.com/rveen/logb" target="_blank" rel="noopener">Logb</a> file: an open, MIT-licensed format for test data whose frames are self-describing, length-prefixed and checksummed. A Ktest recording is complete in itself. It contains:</p>
+<p>The recording is a <a href="https://github.com/trukeio/logb" target="_blank" rel="noopener">Logb</a> file: an open, MIT-licensed format for test data whose frames are self-describing, length-prefixed and checksummed. A Ktest recording is complete in itself. It contains:</p>
 <div class="scroll"><table>
 <thead><tr><th>Content</th><th>Why</th></tr></thead>
 <tbody>

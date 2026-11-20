@@ -27,7 +27,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rveen/ktest/scope"
+	"github.com/trukeio/ktest/scope"
 )
 
 func main() {

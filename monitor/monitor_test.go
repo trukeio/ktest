@@ -11,9 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/rveen/logb"
+	"github.com/trukeio/logb"
 
-	"github.com/rveen/ktest/channel"
+	"github.com/trukeio/ktest/channel"
 )
 
 const ms = int64(1e6)

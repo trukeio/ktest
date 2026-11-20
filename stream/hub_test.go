@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/rveen/logb"
+	"github.com/trukeio/logb"
 )
 
 func uid(s string) [16]byte { return uuid.NewSHA1(uuid.NameSpaceOID, []byte(s)) }

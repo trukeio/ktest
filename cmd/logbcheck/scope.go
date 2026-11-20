@@ -13,7 +13,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/rveen/logb"
+	"github.com/trukeio/logb"
 )
 
 // The scope half of the checker.

@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/rveen/logb"
+	"github.com/trukeio/logb"
 )
 
 // psuRec is one record of a supply channel's state stream.

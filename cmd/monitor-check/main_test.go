@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rveen/ktest/dut"
+	"github.com/trukeio/ktest/dut"
 )
 
 // The fixture is a recording of examples/supply-bench running its ramp

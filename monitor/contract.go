@@ -35,9 +35,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rveen/ktest/channel"
-	"github.com/rveen/ktest/expr"
-	"github.com/rveen/ktest/procedure"
+	"github.com/trukeio/ktest/channel"
+	"github.com/trukeio/ktest/expr"
+	"github.com/trukeio/ktest/procedure"
 )
 
 // SchemaVersion is the contract schema this package reads.

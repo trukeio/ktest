@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rveen/ktest/expr"
+	"github.com/trukeio/ktest/expr"
 )
 
 // Outcome is how a keyword call ended. ok and nok are values: a keyword that

@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rveen/ktest/expr"
-	"github.com/rveen/ktest/procedure"
-	"github.com/rveen/ktest/procedure/lib"
+	"github.com/trukeio/ktest/expr"
+	"github.com/trukeio/ktest/procedure"
+	"github.com/trukeio/ktest/procedure/lib"
 )
 
 // rack is a stand-in for the daemon: a few channels, the writes asked of it,

@@ -18,8 +18,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rveen/ktest/procedure"
-	"github.com/rveen/ktest/procedure/lib"
+	"github.com/trukeio/ktest/procedure"
+	"github.com/trukeio/ktest/procedure/lib"
 )
 
 // # Locked mode

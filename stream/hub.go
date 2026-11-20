@@ -52,7 +52,7 @@ import (
 	"math"
 	"sync"
 
-	"github.com/rveen/logb"
+	"github.com/trukeio/logb"
 )
 
 // The framing, which is all this package needs to know about the format:

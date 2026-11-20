@@ -18,9 +18,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rveen/logb"
+	"github.com/trukeio/logb"
 
-	"github.com/rveen/ktest/record"
+	"github.com/trukeio/ktest/record"
 )
 
 // A panel is a rack layout: widgets placed on a grid, each bound to channels

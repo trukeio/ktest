@@ -13,9 +13,9 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/rveen/ktest/can"
-	"github.com/rveen/ktest/dut"
-	"github.com/rveen/ktest/psu"
+	"github.com/trukeio/ktest/can"
+	"github.com/trukeio/ktest/dut"
+	"github.com/trukeio/ktest/psu"
 )
 
 // The bus the end-to-end tests run on. They are skipped without it; per §8

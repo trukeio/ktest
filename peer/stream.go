@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rveen/logb"
+	"github.com/trukeio/logb"
 )
 
 // Item is one record the DUT rack streamed, with both racks' times.
