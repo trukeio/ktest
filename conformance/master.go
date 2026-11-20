@@ -2,20 +2,13 @@ package conformance
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/tls"
-	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"math"
-	"math/big"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -28,6 +21,7 @@ import (
 
 	"github.com/trukeio/logb"
 
+	"github.com/trukeio/ktest/internal/faultinject"
 	"github.com/trukeio/ktest/peer"
 	"github.com/trukeio/ktest/record"
 	"github.com/trukeio/ktest/secondary"
@@ -156,7 +150,7 @@ func (m *masterRun) setUp() error {
 	if err := os.WriteFile(filepath.Join(m.cfg.Dir, "master.token"), []byte(token+"\n"), 0o600); err != nil {
 		return err
 	}
-	cert, err := selfSigned(filepath.Join(m.cfg.Dir, "cert.pem"))
+	cert, err := secondary.SelfSigned(filepath.Join(m.cfg.Dir, "cert.pem"), 7*24*time.Hour, "localhost", "127.0.0.1", "::1")
 	if err != nil {
 		return err
 	}
@@ -419,34 +413,41 @@ func (m *masterRun) run(ctx context.Context) {
 
 	// Faults: §9.4. What a master does about them is its own; the
 	// timeline says when they were.
+	m.begin(FaultAbort)
 	m.setVolts(17)
 	m.event("FAULT abort: the supply reads 17 V, so mon.abort goes dev")
 	m.sleep(ctx, m.cfg.Phase)
 	m.setVolts(12)
+	m.end()
 	m.event("cleared: the supply reads 12 V, so mon.abort goes ok")
 	m.sleep(ctx, m.cfg.Phase)
 
 	m.event("FAULT frozen: the rack stands still, and its watermark stops")
-	m.srv.Freeze(m.cfg.Phase)
+	m.begin(FaultFrozen)
+	faultinject.Freeze(m.srv, m.cfg.Phase)
+	m.end()
 	m.event("cleared: the rack runs again")
 	m.sleep(ctx, m.cfg.Phase)
 
 	// The link lost, and back: §9.3.
+	m.begin(FaultLink)
 	m.setDown(true)
 	m.event("FAULT link lost: every subscription ended, every request answered 503")
 	m.sleep(ctx, m.cfg.Phase)
 	up := time.Now()
 	m.setDown(false)
+	m.end()
 	m.event("cleared: the rack answers again")
 	m.checkReconnect(ctx, up, "after the link is lost")
 
 	// Another contract, and another protocol: §9.1 again, on reconnection.
 	for _, f := range []struct {
 		name     string
+		kind     string
 		override func(map[string]any)
 	}{
-		{"another contract", func(o map[string]any) { o["sha256"] = strings.Repeat("0", 64) }},
-		{"another protocol version", func(o map[string]any) { o["protocol"] = peer.Protocol + 1 }},
+		{"another contract", FaultContract, func(o map[string]any) { o["sha256"] = strings.Repeat("0", 64) }},
+		{"another protocol version", FaultProtocol, func(o map[string]any) { o["protocol"] = peer.Protocol + 1 }},
 	} {
 		o := m.contractAnswer()
 		f.override(o)
@@ -454,6 +455,7 @@ func (m *masterRun) run(ctx context.Context) {
 		m.override = o
 		m.mu.Unlock()
 		m.event("FAULT %s: the rack drops its link, and comes back 200 ms later stating it", f.name)
+		m.begin(f.kind)
 		m.setDown(true) // the subscriptions end, as a restarted rack's would
 		m.sleep(ctx, 200*time.Millisecond)
 		from := time.Now()
@@ -474,13 +476,24 @@ func (m *masterRun) run(ctx context.Context) {
 		m.mu.Lock()
 		m.override = nil
 		m.mu.Unlock()
+		m.end()
 		back := time.Now()
 		m.event("cleared: the rack states its own contract again")
 		m.checkReconnect(ctx, back, "after "+f.name)
 	}
 	m.checkLease(start)
 	m.event("done")
+	if b, err := json.MarshalIndent(FaultFile{Rack: "https://" + m.addr, Faults: m.r.Faults}, "", "  "); err == nil {
+		os.WriteFile(filepath.Join(m.cfg.Dir, "faults.json"), append(b, '\n'), 0o644)
+	}
 }
+
+// begin and end mark a fault on the reference rack's clock.
+func (m *masterRun) begin(kind string) {
+	m.r.Faults = append(m.r.Faults, Fault{Kind: kind, Start: time.Now()})
+}
+
+func (m *masterRun) end() { m.r.Faults[len(m.r.Faults)-1].End = time.Now() }
 
 func countOf(log []request, pred func(request) bool) int {
 	n := 0
@@ -624,35 +637,4 @@ func (m *masterRun) inFault(t time.Time) bool {
 		}
 	}
 	return on
-}
-
-// selfSigned makes a certificate for 127.0.0.1 and localhost, and writes
-// it where the master is told to find it.
-func selfSigned(path string) (tls.Certificate, error) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return tls.Certificate{}, err
-	}
-	serial, _ := rand.Int(rand.Reader, big.NewInt(1<<62))
-	now := time.Now()
-	tmpl := &x509.Certificate{
-		SerialNumber:          serial,
-		Subject:               pkix.Name{CommonName: "ktest conformance reference rack"},
-		NotBefore:             now.Add(-time.Minute),
-		NotAfter:              now.AddDate(0, 0, 7),
-		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		IsCA:                  true,
-		BasicConstraintsValid: true,
-		DNSNames:              []string{"localhost"},
-		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
-	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-	if err != nil {
-		return tls.Certificate{}, err
-	}
-	if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o644); err != nil {
-		return tls.Certificate{}, err
-	}
-	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}, nil
 }

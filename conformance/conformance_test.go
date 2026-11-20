@@ -46,7 +46,14 @@ func newRack(t *testing.T, wrap func(http.Handler) http.Handler) *rack {
 	must(t, os.WriteFile(cp, []byte(referenceContract), 0o644))
 	must(t, os.WriteFile(filepath.Join(dir, "actions.txt"), []byte(referenceActions), 0o644))
 	srv, err := secondary.New(secondary.Config{Contract: cp, Streams: []*logb.Schema{beatSchema, refSupplySchema},
-		Actions: secondary.ActionFunc(func(ctx context.Context, a string) error { return nil }),
+		// reset takes a while, as a real one does, so that a second action
+		// asked for meanwhile can be refused.
+		Actions: secondary.ActionFunc(func(ctx context.Context, a string) error {
+			if a == "reset" {
+				time.Sleep(200 * time.Millisecond)
+			}
+			return nil
+		}),
 		Auth: secondary.Tokens(map[string]secondary.Caller{"op": {Name: "alice", Operate: true},
 			"op2": {Name: "bob", Operate: true}, "vw": {Name: "viewer"}}),
 		Recording: io.Discard})

@@ -27,6 +27,11 @@
 //	 http://ktest/bus/vcan0/send over k.sock with the lease's token)
 //	logbcheck -tx sent.log run.logb ref.log
 //
+// A master's protection is checked with -faults, against the faults.json
+// peer-conformance master writes: for each fault it injected, the master's
+// rule must take hold within -react of its start and clear within -recover
+// of its end (faults.go).
+//
 // The control plane is checked with -control, against the limits the
 // recording itself declares: nothing accepted unarmed or without the lease, no
 // cyclic period below the floor, no refusal its state does not justify, every
@@ -119,6 +124,9 @@ func main() {
 		scopeT  = flag.String("scope", "", "also check a scope against the simulator's own account of the run: name=transcript.log")
 		dutT    = flag.String("dutsim", "", "also check the procedure's step results against dutsim's transcript of what the DUT did")
 		judge   = flag.Bool("judgements", false, "also replay every judgement of the DUT's monitors from the mirrored states")
+		faultsF = flag.String("faults", "", "also hold a master's protection rules to the faults peer-conformance master wrote (faults.json)")
+		react   = flag.Duration("react", 250*time.Millisecond, "-faults: how soon after a fault begins its rule must hold (a frozen rack adds the watermark age)")
+		recov   = flag.Duration("recover", 5*time.Second, "-faults: how soon after a fault ends its rule must clear")
 	)
 	flag.Usage = usage
 	flag.Parse()
@@ -215,6 +223,17 @@ func main() {
 		}
 		fmt.Printf("logbcheck: %d judgements of the DUT's monitors replay from the mirrored states, "+
 			"each to what the keyword was told\n", n)
+	}
+	if *faultsF != "" {
+		n, lines, err := compareFaults(flag.Arg(0), *faultsF, *react, *recov, *verbose)
+		if err != nil {
+			fail(err)
+		}
+		fmt.Printf("logbcheck: the master took the rule each of the %d faults in %s calls for within %v of its start, "+
+			"held it, and cleared it within %v of its end:\n", n, *faultsF, *react, *recov)
+		for _, l := range lines {
+			fmt.Printf("  %s\n", l)
+		}
 	}
 	if *dutT != "" {
 		n, err := compareDutsim(flag.Arg(0), *dutT, *verbose)

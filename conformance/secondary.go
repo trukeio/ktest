@@ -86,6 +86,13 @@ type secChecker struct {
 
 	wms      []int64 // the watermarks read, in order
 	badState string  // a monitor state code §5.1 does not have, if one was read
+
+	// The clocks' offset, the rack's less the checker's, and its
+	// uncertainty, for the latency of what arrives (§10.4).
+	offset, unc time.Duration
+	haveOff     bool
+	lateTrans   []time.Duration // a transition's arrival less its own time
+	lateWM      []time.Duration // a watermark's arrival less what it vouches for
 }
 
 func (c *secChecker) run(ctx context.Context) {
@@ -106,8 +113,11 @@ func (c *secChecker) run(ctx context.Context) {
 	}
 	c.refusals(ctx, lease)
 	c.modeAndAction(ctx, lease)
+	c.busy(ctx, lease)
 	c.disarm(ctx, lease)
 	c.release(ctx, lease)
+	c.lapse(ctx)
+	c.latency()
 }
 
 // §2: no token, or one the rack does not know, is 401 and nothing else.
@@ -174,7 +184,8 @@ func (c *secChecker) clock(ctx context.Context) {
 	c.r.check("§6.7", "GET /clock answers 200, not to be cached", err)
 	var last int64
 	var minRTT time.Duration = time.Hour
-	for i := 0; i < 5; i++ {
+	var o peer.Offsets
+	for i := 0; i < 8; i++ {
 		s, err := c.op.Clock(ctx)
 		if err != nil {
 			c.r.fail("§6.7", "the clock moves forward", "%v", err)
@@ -185,6 +196,8 @@ func (c *secChecker) clock(ctx context.Context) {
 			return
 		}
 		last, minRTT = s.Peer, min(minRTT, s.RTT())
+		e := o.Add(s)
+		c.offset, c.unc, c.haveOff = e.Offset, e.Uncertainty, true
 	}
 	c.r.pass("§6.7", "the clock moves forward", "shortest round trip %v", minRTT.Round(time.Microsecond))
 }
@@ -207,10 +220,17 @@ func (c *secChecker) subscribe(ctx context.Context) bool {
 			c.items <- it
 		}
 	}()
-	// A second of it: the schemas, the held values restated, and enough
-	// watermarks to judge their cadence.
+	// At least a second of it, for enough watermarks to judge their
+	// cadence, and until every stream §7.1 sends has been seen: a held
+	// stream is restated at the next segment boundary, which may be a
+	// second away. Three seconds at most.
+	want := []string{"mon.watermark", "mode"}
+	for _, m := range c.id.Monitors {
+		want = append(want, "mon."+m)
+	}
 	seen := map[string]*logb.Schema{}
-	deadline := time.After(time.Second)
+	minimum, maximum := time.After(time.Second), time.After(3*time.Second)
+	enough := false
 	c.wms = nil
 read:
 	for {
@@ -221,7 +241,12 @@ read:
 		case err := <-c.subErr:
 			c.r.fail("§7.1", "the subscription stays open", "%v", err)
 			return false
-		case <-deadline:
+		case <-minimum:
+			enough = true
+		case <-maximum:
+			break read
+		}
+		if enough && !slices.ContainsFunc(want, func(n string) bool { return seen[n] == nil }) {
 			break read
 		}
 	}
@@ -246,8 +271,18 @@ read:
 // wms are the watermarks read so far: their values, and the records' own
 // times.
 func (c *secChecker) note(it peer.Item) {
+	// The rack's time of a record, on the checker's clock.
+	here := func(peerT int64) time.Time { return time.Unix(0, peerT-int64(c.offset)) }
 	if it.Schema.Name == "mon.watermark" && !it.Restated {
-		c.wms = append(c.wms, int64(peer.Num(&it, "upto")))
+		upto := int64(peer.Num(&it, "upto"))
+		c.wms = append(c.wms, upto)
+		if c.haveOff {
+			c.lateWM = append(c.lateWM, it.Recv.Sub(here(upto)))
+		}
+	}
+	if c.haveOff && !it.Restated && strings.HasPrefix(it.Schema.Name, "mon.") &&
+		it.Schema.Name != "mon.watermark" && it.Schema.Name != "mon.gap" {
+		c.lateTrans = append(c.lateTrans, it.Recv.Sub(here(it.PeerT)))
 	}
 	if strings.HasPrefix(it.Schema.Name, "mon.") && it.Schema.Name != "mon.watermark" && it.Schema.Name != "mon.gap" {
 		st := it.Rec[8]
@@ -283,7 +318,7 @@ func (c *secChecker) layouts(seen map[string]*logb.Schema) {
 		}
 	}
 	if len(missing) > 0 {
-		c.r.fail("§7.1", "a subscriber is sent every monitor, the watermark and the mode", "no %s within a second",
+		c.r.fail("§7.1", "a subscriber is sent every monitor, the watermark and the mode", "no %s within 3 s",
 			strings.Join(missing, ", "))
 	} else {
 		c.r.pass("§7.1", "a subscriber is sent every monitor, the watermark and the mode", "%d streams", len(want))
@@ -634,4 +669,153 @@ func rawClient(caCert string) (*http.Client, error) {
 func readToken(path string) (string, error) {
 	b, err := os.ReadFile(path)
 	return strings.TrimSpace(string(b)), err
+}
+
+// §6.5, §6.6: one action at a time; a second, asked for while the first
+// runs, is refused 409. An action that ends before the second request
+// arrives cannot show it, and the check is skipped.
+func (c *secChecker) busy(ctx context.Context, lease string) {
+	const title = "an action asked for while another runs is refused 409"
+	if c.cfg.Action == "" {
+		c.r.skip("§6.6", title, "no action given to run")
+		return
+	}
+	seq1, err := c.op.Invoke(ctx, lease, c.cfg.Action)
+	if err != nil {
+		c.r.fail("§6.6", title, "the first: %v", err)
+		return
+	}
+	seq2, err2 := c.op.Invoke(ctx, lease, c.cfg.Action)
+	stream := "dut.action." + c.cfg.Action
+	// Read until both are over: the order of the first's end and the
+	// second's start says whether they overlapped.
+	var order []string
+	ended := map[uint32]bool{}
+	want := 1
+	if err2 == nil {
+		want = 2
+	}
+	timeout := time.After(2 * c.cfg.Wait)
+	for len(ended) < want {
+		select {
+		case it := <-c.items:
+			c.note(it)
+			if it.Schema.Name != stream || it.Restated {
+				continue
+			}
+			seq, ev := uint32(peer.Num(&it, "seq")), peer.Num(&it, "event")
+			if seq != seq1 && (err2 != nil || seq != seq2) {
+				continue
+			}
+			order = append(order, fmt.Sprintf("%d:%v", seq, ev))
+			if ev == 2 {
+				ended[seq] = true
+			}
+		case err := <-c.subErr:
+			c.r.fail("§6.6", title, "the subscription ended: %v", err)
+			return
+		case <-timeout:
+			c.r.fail("§6.6", title, "the actions did not end within %v", 2*c.cfg.Wait)
+			return
+		}
+	}
+	switch {
+	case refusedWith(err2) == http.StatusConflict:
+		c.r.pass("§6.6", title, "")
+	case err2 != nil:
+		c.r.fail("§6.6", title, "the second: %v", err2)
+	case slices.Index(order, fmt.Sprintf("%d:2", seq1)) < slices.Index(order, fmt.Sprintf("%d:1", seq2)):
+		c.r.skip("§6.6", title, "action %s ended before the second request arrived; give one that takes longer", c.cfg.Action)
+	default:
+		c.r.fail("§6.6", title, "both ran at once: %s", strings.Join(order, " "))
+	}
+}
+
+// §6.3, §10.1: a lease that runs out stops nothing. The rack's watermark
+// goes on, the mode it was in stays applied, and another caller may then
+// take the lease.
+func (c *secChecker) lapse(ctx context.Context) {
+	const title = "a lease that runs out stops nothing on the DUT"
+	lease, err := c.op.Lease(ctx, "", time.Second)
+	if err != nil {
+		c.r.fail("§6.3", title, "a 1 s lease: %v", err)
+		return
+	}
+	mode := c.mode()
+	if mode != "" {
+		if err := c.op.Arm(ctx, lease); err != nil {
+			c.r.fail("§6.3", title, "arm: %v", err)
+			return
+		}
+		c.setMode(ctx, lease, mode)
+	}
+	// Two seconds without renewing: the lease runs out after one.
+	from := len(c.wms)
+	changed := ""
+	deadline := time.After(2 * time.Second)
+wait:
+	for {
+		select {
+		case it := <-c.items:
+			c.note(it)
+			if it.Schema.Name == "mode" && !it.Restated && peer.Str(&it, "applied") != mode {
+				changed = fmt.Sprintf("the mode went from %q to %q", mode, peer.Str(&it, "applied"))
+			}
+		case err := <-c.subErr:
+			c.r.fail("§6.3", title, "the subscription ended: %v", err)
+			return
+		case <-deadline:
+			break wait
+		}
+	}
+	other := c.op
+	if c.cfg.Other != "" {
+		if o, err := newClient(c.cfg, c.cfg.Other); err == nil {
+			other = o
+		}
+	}
+	tok, err := other.Lease(ctx, "", 30*time.Second)
+	switch {
+	case err != nil:
+		c.r.fail("§6.3", title, "the lease did not run out: taking it again after 2 s: %v", err)
+		return
+	case changed != "":
+		c.r.fail("§6.3", title, "%s", changed)
+	case len(c.wms)-from < 50:
+		c.r.fail("§6.3", title, "%d watermarks in the 2 s it ran out in", len(c.wms)-from)
+	default:
+		c.r.pass("§6.3", title, "watermark and mode %q went on; the lease was free after its term", mode)
+	}
+	// Left as found: no mode, disarmed, no lease.
+	if mode != "" {
+		other.Arm(ctx, tok)
+		other.SetMode(ctx, tok, "")
+	}
+	other.Disarm(ctx)
+	other.Release(ctx, tok)
+}
+
+// §10.4: how late a transition reaches a subscriber, its own time to its
+// arrival, through the clocks' offset. A target, not a rule, and one that
+// depends on where the rack stamps its inputs, so it is reported.
+func (c *secChecker) latency() {
+	const title = "a transition reaches a subscriber within 5 ms at the 99th percentile, on loopback"
+	if !c.haveOff || len(c.lateWM) == 0 {
+		c.r.skip("§10.4", title, "nothing was streamed to measure")
+		return
+	}
+	pct := func(d []time.Duration, p float64) time.Duration {
+		d = slices.Clone(d)
+		slices.Sort(d)
+		return d[min(len(d)-1, int(p*float64(len(d))))]
+	}
+	r := func(d time.Duration) time.Duration { return d.Round(10 * time.Microsecond) }
+	detail := "no transitions in the run"
+	if len(c.lateTrans) > 0 {
+		detail = fmt.Sprintf("%d transitions: median %v, 99th percentile %v", len(c.lateTrans),
+			r(pct(c.lateTrans, .5)), r(pct(c.lateTrans, .99)))
+	}
+	detail += fmt.Sprintf("; a watermark arrives %v after the time it vouches for (median), %v (99th percentile); clocks known to ±%v",
+		r(pct(c.lateWM, .5)), r(pct(c.lateWM, .99)), c.unc.Round(time.Microsecond))
+	c.r.info("§10.4", title, "%s", detail)
 }

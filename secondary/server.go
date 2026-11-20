@@ -47,6 +47,7 @@ import (
 	"github.com/trukeio/logb"
 
 	"github.com/trukeio/ktest/channel"
+	"github.com/trukeio/ktest/internal/faultinject"
 	"github.com/trukeio/ktest/monitor"
 	"github.com/trukeio/ktest/peer"
 	"github.com/trukeio/ktest/record"
@@ -398,16 +399,20 @@ func (s *Server) newStream(mk func() *logb.Schema) (*Stream, error) {
 	return &Stream{name: sc.Name, file: f, sub: sb}, nil
 }
 
-// Freeze stops the server for d as a stopped process stops: its clock, its
+// freeze stops the server for d as a stopped process stops: its clock, its
 // evaluator and its streams stand still, and writes and requests that need it
 // wait. The watermark a master reads stops with them. It is for fault
-// injection — the conformance kit's reference rack shows a master a DUT rack
-// whose watermark has stopped (doc/peer-protocol.md §9.4) — and a rack has no
-// other use for it.
-func (s *Server) Freeze(d time.Duration) {
+// injection only, through internal/faultinject: the conformance kit's
+// reference rack shows a master a DUT rack whose watermark has stopped
+// (doc/peer-protocol.md §9.4).
+func (s *Server) freeze(d time.Duration) {
 	s.mu.Lock()
 	time.Sleep(d)
 	s.mu.Unlock()
+}
+
+func init() {
+	faultinject.Freeze = func(server any, d time.Duration) { server.(*Server).freeze(d) }
 }
 
 // Contract is the loaded contract.

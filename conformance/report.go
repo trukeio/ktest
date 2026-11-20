@@ -33,9 +33,10 @@ const (
 	Pass Status = iota
 	Fail
 	Skip // could not be checked: what it needs was not given, or an earlier check failed
+	Info // a measurement the specification states as a target, reported and not judged
 )
 
-func (s Status) String() string { return [...]string{"pass", "FAIL", "skip"}[s] }
+func (s Status) String() string { return [...]string{"pass", "FAIL", "skip", "info"}[s] }
 
 // Result is one check.
 type Result struct {
@@ -52,11 +53,41 @@ type Event struct {
 }
 
 // Report is a run's results, in the order they were checked, and for a
-// master's run, its timeline.
+// master's run, its timeline and its faults.
 type Report struct {
 	Subject  string
 	Results  []Result
 	Timeline []Event
+	Faults   []Fault
+}
+
+// The faults a master is put through (§9.4), and the rule each must make
+// it take: dut_abort for an abort, monitoring_lost for the rest.
+const (
+	FaultAbort    = "abort"    // mon.abort is dev
+	FaultFrozen   = "frozen"   // the rack stands still; its watermark stops
+	FaultLink     = "link"     // every subscription ended, every request refused
+	FaultContract = "contract" // the rack comes back stating another contract
+	FaultProtocol = "protocol" // the rack comes back stating another protocol version
+)
+
+// Fault is one fault, from when it began to when it ended, by the
+// reference rack's clock.
+type Fault struct {
+	Kind  string    `json:"kind"`
+	Start time.Time `json:"start"`
+	End   time.Time `json:"end"`
+}
+
+// FaultFile is faults.json, which Master writes beside the master's
+// settings: what a master's own recording must answer to. For each fault
+// the master takes its rule (dut_abort for an abort, monitoring_lost for
+// the rest) within its reaction time of the start, and the rule clears after
+// the end. The times are the reference rack's clock; the master's recording
+// relates them to its own by the clock offset it recorded (§8).
+type FaultFile struct {
+	Rack   string  `json:"rack"`
+	Faults []Fault `json:"faults"`
 }
 
 func (r *Report) pass(section, title, format string, a ...any) {
@@ -65,6 +96,10 @@ func (r *Report) pass(section, title, format string, a ...any) {
 
 func (r *Report) fail(section, title, format string, a ...any) {
 	r.Results = append(r.Results, Result{section, title, Fail, fmt.Sprintf(format, a...)})
+}
+
+func (r *Report) info(section, title, format string, a ...any) {
+	r.Results = append(r.Results, Result{section, title, Info, fmt.Sprintf(format, a...)})
 }
 
 func (r *Report) skip(section, title, format string, a ...any) {
@@ -95,7 +130,7 @@ func (r *Report) Failed() int {
 // Write prints the report as text.
 func (r *Report) Write(w io.Writer) {
 	fmt.Fprintf(w, "%s\n\n", r.Subject)
-	counts := [3]int{}
+	counts := [4]int{}
 	for _, x := range r.Results {
 		counts[x.Status]++
 		line := fmt.Sprintf("  %-4s  %-6s %s", x.Status, x.Section, x.Title)
@@ -110,5 +145,5 @@ func (r *Report) Write(w io.Writer) {
 			fmt.Fprintf(w, "  %s  %s\n", e.At.UTC().Format("15:04:05.000000"), e.What)
 		}
 	}
-	fmt.Fprintf(w, "\n%d passed, %d failed, %d skipped\n", counts[Pass], counts[Fail], counts[Skip])
+	fmt.Fprintf(w, "\n%d passed, %d failed, %d skipped, %d measured\n", counts[Pass], counts[Fail], counts[Skip], counts[Info])
 }

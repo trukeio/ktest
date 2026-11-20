@@ -22,22 +22,12 @@ package main
 import (
 	"bufio"
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/sha256"
 	"crypto/tls"
-	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/binary"
-	"encoding/hex"
-	"encoding/pem"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"math"
-	"math/big"
 	"net"
 	"net/http"
 	"os"
@@ -121,7 +111,7 @@ func run(ctx context.Context, contractPath, addr, tokensPath, certPath, out, sup
 
 	// The rack: the contract against these streams, the actions, who may
 	// connect, and the recording.
-	auth, err := loadTokens(tokensPath)
+	auth, err := secondary.LoadTokens(tokensPath)
 	if err != nil {
 		return err
 	}
@@ -150,7 +140,7 @@ func run(ctx context.Context, contractPath, addr, tokensPath, certPath, out, sup
 
 	// The network: TLS with a certificate made for this run, which the
 	// master pins.
-	cert, err := selfSigned(certPath)
+	cert, err := secondary.SelfSigned(certPath, 365*24*time.Hour, "localhost", "127.0.0.1")
 	if err != nil {
 		return err
 	}
@@ -296,63 +286,4 @@ func (d *dutRack) poll(ctx context.Context, conn net.Conn, ch int) error {
 			return nil
 		}
 	}
-}
-
-// loadTokens reads a tokens file as ktestd does: one "name role hash" a
-// line, the hash the sha256 of the token, # a comment. Only hashes are kept,
-// so the file admits nobody by being read.
-func loadTokens(path string) (func(string) (secondary.Caller, bool), error) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	byHash := map[string]secondary.Caller{}
-	for i, line := range strings.Split(string(b), "\n") {
-		if line, _, _ = strings.Cut(line, "#"); strings.TrimSpace(line) == "" {
-			continue
-		}
-		f := strings.Fields(line)
-		if len(f) != 3 || (f[1] != "view" && f[1] != "operate") || len(f[2]) != 64 {
-			return nil, fmt.Errorf("%s:%d: want name role sha256", path, i+1)
-		}
-		byHash[f[2]] = secondary.Caller{Name: f[0], Operate: f[1] == "operate"}
-	}
-	if len(byHash) == 0 {
-		return nil, errors.New(path + " admits nobody")
-	}
-	return func(tok string) (secondary.Caller, bool) {
-		sum := sha256.Sum256([]byte(tok))
-		c, ok := byHash[hex.EncodeToString(sum[:])]
-		return c, ok
-	}, nil
-}
-
-// selfSigned makes a certificate for this run, for 127.0.0.1 and localhost,
-// and writes it where the master is told to find it.
-func selfSigned(path string) (tls.Certificate, error) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return tls.Certificate{}, err
-	}
-	serial, _ := rand.Int(rand.Reader, big.NewInt(1<<62))
-	now := time.Now()
-	tmpl := &x509.Certificate{
-		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: "library-rack"},
-		NotBefore:    now.Add(-time.Minute),
-		NotAfter:     now.AddDate(1, 0, 0),
-		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		IsCA:         true, BasicConstraintsValid: true,
-		DNSNames:    []string{"localhost"},
-		IPAddresses: []net.IP{net.ParseIP("127.0.0.1")},
-	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-	if err != nil {
-		return tls.Certificate{}, err
-	}
-	if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o644); err != nil {
-		return tls.Certificate{}, err
-	}
-	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}, nil
 }
