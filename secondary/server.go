@@ -398,6 +398,18 @@ func (s *Server) newStream(mk func() *logb.Schema) (*Stream, error) {
 	return &Stream{name: sc.Name, file: f, sub: sb}, nil
 }
 
+// Freeze stops the server for d as a stopped process stops: its clock, its
+// evaluator and its streams stand still, and writes and requests that need it
+// wait. The watermark a master reads stops with them. It is for fault
+// injection — the conformance kit's reference rack shows a master a DUT rack
+// whose watermark has stopped (doc/peer-protocol.md §9.4) — and a rack has no
+// other use for it.
+func (s *Server) Freeze(d time.Duration) {
+	s.mu.Lock()
+	time.Sleep(d)
+	s.mu.Unlock()
+}
+
 // Contract is the loaded contract.
 func (s *Server) Contract() *monitor.Contract { return s.c }
 

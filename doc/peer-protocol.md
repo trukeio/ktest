@@ -223,7 +223,7 @@ The same input history MUST give the same transitions, with the same timestamps 
 ### 5.6 Watermark
 
 - The secondary publishes `mon.watermark` with field `upto`: every transition with timestamp ≤ `upto` has been sent.
-- It MUST be emitted at least every 10 ms while the evaluator keeps up. SHOULD be configurable.
+- It SHOULD be emitted every 10 ms, and SHOULD be configurable. While the evaluator keeps up, successive watermarks MUST NOT be more than 50 ms apart. (An evaluator that emits once 10 ms have passed, on a 1 ms tick, steps a little over 10 ms; that is the intent.)
 - It MUST NOT go backwards.
 - It MUST stop advancing if the evaluator falls behind. It MUST NOT advance past inputs not yet evaluated.
 - The evaluator MAY hold a record for a short **reorder window** for earlier ones to arrive; the watermark trails the clock by at least that window.
@@ -479,10 +479,28 @@ From a sample arriving to the resulting transition being on the wire SHOULD take
 
 ## 12. Conformance
 
-*Planned.* The kit will consist of:
+`cmd/peer-conformance` (package `conformance`) checks an implementation from the outside, over the network, whatever it is written in. It exits 1 if a check failed.
 
-- **secondary conformance**: a simulated DUT (`cmd/dutsim`), a set of contracts and input recordings, and the transitions and watermarks each must produce, checked with `monitor-check`'s evaluator as reference;
-- **master conformance**: a reference secondary that can be told to stall the watermark, raise `abort`, drop the link and refuse requests, and a checker of the master's recording against §9.
+**A secondary:**
+
+```
+peer-conformance secondary -url https://host:port -cacert rack.pem -contract dut-interface.json \
+    -token operate.token [-other operate2.token] [-view view.token] [-mode m] [-action a]
+```
+
+It acts as a master and checks §2 (tokens and roles), §3.3 (hashes), §5.1 and §5.6 (state codes, the watermark's order and cadence), §6 (every endpoint, every refusal and its status and number, the lease, arming, a mode entered and left and an action run, each with its records under its number), §7 (the stream's format, metadata and the layouts of §7.4) and §11. It takes the lease, arms, changes the mode and disarms: run it on a bench, never during a test. `-action` runs an action on the DUT; without it, none is run.
+
+The monitors' semantics (§5) are checked on the secondary's recording: `monitor-check -live dut-interface.json recording.logb` replays it through the reference evaluator, which must give every transition the secondary recorded live, to the nanosecond.
+
+**A master:**
+
+```
+peer-conformance master [-addr 127.0.0.1:8446] [-dir conformance] [-phase 3s]
+```
+
+It runs a reference secondary, prints the settings for the master to connect to it, and puts the master through each fault in turn, with a quiet phase after each: `abort` going `dev`; the rack frozen, its watermark stopped; the link lost; the rack coming back with another contract; and with another protocol version. It checks what a secondary can see (§8 clock sampling, §9.1 the contract asked for before anything proceeds, and nothing proceeding against another contract or version, §9.2 lease renewal, §9.3 the contract asked for again on every reconnection, §9.4 a subscription that includes the abort monitor). What the master does about each fault (§9.4: removing the stress) happens in its own world: the report's timeline says when each fault began and ended, and the master's own recording must show each rule taking hold within its configured age of the fault, and clearing after it.
+
+The kit is held to this repository's implementations: `secondary.Server`, `ktestd -contract`, `peer`'s master and `ktestd -peer` all pass it, and implementations broken on purpose fail it where they are broken.
 
 ## 13. `ktestd` against this document
 
@@ -506,6 +524,7 @@ From a sample arriving to the resulting transition being on the wire SHOULD take
 | `expr` | either side: the language of §4 | done |
 | `peer` | a master: `Client`, `Link`, `View`, `DUT`, `Guard` (§6–§9) | done; `ktestd -peer` runs on it |
 | `monitor` | a secondary: contract loader and evaluator (§3, §5); how actions are defined is a hook, `ActionCheck` | done |
+| `conformance` | checking either side from the outside; `cmd/peer-conformance` (§12) | done |
 | `secondary` | a secondary: `Server`, over the host's streams and an `Actions` it runs (§5–§7, §10); the record layouts of §7.4 and the `/stream/sub` filter, which `ktestd -contract` shares | done |
 
 A program that is a DUT rack declares its streams with `record.Schema`, gives `secondary.New` the contract, its streams, an `Actions` and an `Auth`, serves `Server.Handler` over TLS, and writes its records with `Server.Write`. The server's reorder window (`Config.Window`, 20 ms by default) must exceed the longest the program takes between a record's time and writing it; a later record is a gap.
