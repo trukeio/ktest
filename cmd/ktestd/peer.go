@@ -337,6 +337,9 @@ func newPeerLink(cfg peer.Config, r *rules, meta map[string]string) (*peerLink, 
 }
 
 func sameContract(id *monitor.Identity, info peer.Info) error {
+	if err := info.Supported(); err != nil {
+		return err
+	}
 	switch {
 	case info.Hash != id.Hash:
 		return fmt.Errorf("it runs contract %s, sha256 %.12s…, and this rack's copy, %s, is %s, sha256 %.12s…",

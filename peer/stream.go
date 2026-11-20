@@ -112,6 +112,17 @@ func (s *Stream) needEpoch() error {
 		return nil
 	}
 	for _, kv := range s.r.Meta {
+		if kv.Key == "peer.protocol" {
+			v, err := strconv.Atoi(kv.Value)
+			if err != nil {
+				return fmt.Errorf("peer.protocol %q: %v", kv.Value, err)
+			}
+			if err := supported(v); err != nil {
+				return err
+			}
+		}
+	}
+	for _, kv := range s.r.Meta {
 		if kv.Key == "recording.epoch" {
 			e, err := strconv.ParseInt(kv.Value, 10, 64)
 			if err != nil {

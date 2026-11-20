@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 
 	"github.com/trukeio/ktest/channel"
 	"github.com/trukeio/ktest/monitor"
+	"github.com/trukeio/ktest/peer"
 	"github.com/trukeio/ktest/record"
 	"github.com/trukeio/ktest/stream"
 )
@@ -104,6 +106,7 @@ func loadContract(p string, ch *channel.Table, cfg *record.Config) (*monitor.Con
 	if err != nil {
 		return nil, err
 	}
+	cfg.Meta["peer.protocol"] = strconv.Itoa(peer.Protocol)
 	cfg.Meta["dut.contract"] = c.Name
 	cfg.Meta["dut.contract.sha256"] = c.Hash
 	cfg.Meta["dut.contract.source"] = p

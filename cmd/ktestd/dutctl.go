@@ -24,6 +24,7 @@ import (
 	"github.com/trukeio/ktest/channel"
 	"github.com/trukeio/ktest/expr"
 	"github.com/trukeio/ktest/monitor"
+	"github.com/trukeio/ktest/peer"
 	"github.com/trukeio/ktest/procedure"
 	"github.com/trukeio/ktest/procedure/lib"
 	"github.com/trukeio/ktest/record"
@@ -647,6 +648,7 @@ func (d *daemon) dutContract(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
+		"protocol":        peer.Protocol,
 		"contract":        d.contract.Name,
 		"sha256":          d.contract.Hash,
 		"resource_sha256": d.contract.ResourceHash,

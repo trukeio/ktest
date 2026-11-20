@@ -112,8 +112,15 @@ func New(cfg Config) (*Client, error) {
 // Name is the peer's name.
 func (c *Client) Name() string { return c.cfg.Name }
 
+// Protocol is the peer protocol version this package speaks
+// (doc/peer-protocol.md §11).
+const Protocol = 1
+
 // Info is what a DUT rack says of itself.
 type Info struct {
+	// Protocol is the version the DUT rack says it speaks; 0, a rack that
+	// states none, is version 1.
+	Protocol     int               `json:"protocol"`
 	Contract     string            `json:"contract"`
 	Hash         string            `json:"sha256"`
 	ResourceHash string            `json:"resource_sha256"`
@@ -125,6 +132,19 @@ func (c *Client) Info(ctx context.Context) (Info, error) {
 	var in Info
 	err := c.do(ctx, "GET", "/dut/contract", nil, "", &in)
 	return in, err
+}
+
+// Supported says whether this package speaks the DUT rack's protocol. A
+// master must not go on with a rack it does not.
+func (in Info) Supported() error {
+	return supported(in.Protocol)
+}
+
+func supported(v int) error {
+	if v != 0 && v != Protocol {
+		return fmt.Errorf("the DUT rack speaks peer protocol %d, and this speaks %d", v, Protocol)
+	}
+	return nil
 }
 
 // ClockSample is one round trip to the DUT rack's clock: when it was asked

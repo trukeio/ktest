@@ -123,6 +123,30 @@ func TestRefused(t *testing.T) {
 	}
 }
 
+// A rack that states no protocol is version 1; one that states a version
+// this package does not speak is not to be gone on with.
+func TestProtocol(t *testing.T) {
+	for _, tc := range []struct {
+		body string
+		ok   bool
+	}{
+		{`{"contract":"c","sha256":"ab"}`, true},
+		{`{"protocol":1,"contract":"c","sha256":"ab"}`, true},
+		{`{"protocol":2,"contract":"c","sha256":"ab"}`, false},
+	} {
+		c := rack(t, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			fmt.Fprint(w, tc.body)
+		}))
+		in, err := c.Info(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := in.Supported(); (err == nil) != tc.ok {
+			t.Errorf("%s: Supported() = %v, want ok %v", tc.body, err, tc.ok)
+		}
+	}
+}
+
 // The subscription, against a real recorder writing a live stream into a
 // real hub: the state of a held stream as the next segment restates it, then
 // each record as written, each on the DUT rack's clock to the nanosecond.
