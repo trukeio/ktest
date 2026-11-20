@@ -2,7 +2,9 @@ package procedure
 
 import (
 	"fmt"
+	"maps"
 	"os"
+	"slices"
 	"strings"
 	"unicode"
 )
@@ -662,4 +664,33 @@ func norm(s string) string {
 		b.WriteRune(unicode.ToLower(r))
 	}
 	return b.String()
+}
+
+// CheckActions holds a DUT contract's actions to a Robot resource
+// (monitor.ActionCheck): the resource has keywords and no test cases, and
+// every action names one of them, matched as Robot matches a keyword's name,
+// without regard to case, spaces or underscores. What the keywords may call
+// is the DUT rack's library, which the rack checks when it loads the
+// resource to run them.
+func CheckActions(resource string, raw []byte, actions map[string]string) error {
+	f, err := Parse(resource, string(raw))
+	if err != nil {
+		return fmt.Errorf("resource: %v", err)
+	}
+	if len(f.Tests) > 0 {
+		return fmt.Errorf("resource %s has test cases; it holds the actions' keywords and nothing else", resource)
+	}
+	norm := func(s string) string {
+		return strings.ToLower(strings.Join(strings.Fields(strings.ReplaceAll(s, "_", " ")), ""))
+	}
+	have := map[string]bool{}
+	for _, k := range f.Keywords {
+		have[norm(k.Name)] = true
+	}
+	for _, name := range slices.Sorted(maps.Keys(actions)) {
+		if kw := actions[name]; !have[norm(kw)] {
+			return fmt.Errorf("action %s is keyword %q, which %s does not define", name, kw, resource)
+		}
+	}
+	return nil
 }

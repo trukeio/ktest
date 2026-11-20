@@ -152,7 +152,7 @@ func check(contractPath, recPath, modeChannel string) (*result, error) {
 	}, nil); err != nil {
 		return nil, err
 	}
-	c, err := monitor.Load(contractPath, table)
+	c, err := monitor.Load(contractPath, table, nil)
 	if err != nil {
 		return nil, err
 	}

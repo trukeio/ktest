@@ -134,6 +134,13 @@ type Config struct {
 	// opens the path. A recording that is not going to a file leaves it empty.
 	Path string
 
+	// NoBus says the recording is of no bus: it has none of a bus's streams,
+	// raw, drops or transmit, and Frame, Requested, Applied and Cyclic are
+	// refused. Instruments' control streams are kept, under DeclareControl
+	// and Control with an Instrument. Bus still names the recording. A DUT
+	// rack that reads its DUT some other way than over CAN records this way.
+	NoBus bool
+
 	// TX declares the transmit streams, <bus>.tx.set and <bus>.tx.applied, for
 	// a recorder that also sends. One that cannot transmit leaves it false, and
 	// its recording does not claim streams it could never fill.
@@ -339,6 +346,13 @@ func New(w io.Writer, cfg Config) (*Writer, error) {
 		}
 	}
 
+	if cfg.NoBus {
+		if cfg.TX || cfg.DB != nil {
+			return nil, fmt.Errorf("record: a recording of no bus neither transmits nor decodes")
+		}
+		rw.controls = map[string]*stream{}
+		return rw, nil
+	}
 	rw.raw = &stream{s: rawSchema(cfg)}
 	if err := lw.AddStream(rw.raw.s); err != nil {
 		return nil, err
@@ -399,6 +413,9 @@ func New(w io.Writer, cfg Config) (*Writer, error) {
 // counter that never speaks reports nothing, which is exactly §10.5's warning:
 // the absence of an overflow signal is not evidence of no loss.
 func (w *Writer) Frame(f *can.Frame) error {
+	if w.raw == nil {
+		return errNoBus
+	}
 	t := f.Time
 	if !f.Stamped {
 		t = w.cfg.Now()
@@ -472,6 +489,8 @@ func (w *Writer) Frame(f *can.Frame) error {
 }
 
 var errNoTX = errors.New("record: a transmit record in a recording configured without TX")
+
+var errNoBus = errors.New("record: a bus record in a recording of no bus")
 
 // errnoUnknown is what the set stream says for a refusal that carried no errno.
 const errnoUnknown = 0xFFFF
@@ -578,6 +597,10 @@ func Schema(name string, recordBits uint32, fields []logb.Field, meta map[string
 		Meta:       meta,
 	}
 }
+
+// Epoch is the recording's start: the time every axis counts from, which it
+// states as recording.epoch.
+func (w *Writer) Epoch() time.Time { return w.epoch }
 
 // NewStream declares a stream made with Schema.
 func (w *Writer) NewStream(s *logb.Schema) (*Stream, error) {
@@ -810,7 +833,7 @@ const HolderMax = 32
 // kernel: a request it refused is recorded here and nowhere else, and one it
 // accepted is recorded here and then in the stream of whatever it asked for.
 func (w *Writer) Control(t time.Time, c *Control) error {
-	if w.control == nil {
+	if w.controls == nil {
 		return errNoTX
 	}
 	if len(c.Holder) > HolderMax || len(c.By) > HolderMax || len(c.Channel) > HolderMax {
@@ -821,7 +844,7 @@ func (w *Writer) Control(t time.Time, c *Control) error {
 		return err
 	}
 	st := w.control
-	if c.Instrument != "" && c.Instrument != w.cfg.Bus {
+	if c.Instrument != "" && (c.Instrument != w.cfg.Bus || w.cfg.NoBus) {
 		if st = w.controls[c.Instrument]; st == nil {
 			st = &stream{s: controlSchema(c.Instrument, c.Kind)}
 			if err := w.w.AddStream(st.s); err != nil {
@@ -829,6 +852,9 @@ func (w *Writer) Control(t time.Time, c *Control) error {
 			}
 			w.controls[c.Instrument] = st
 		}
+	}
+	if st == nil {
+		return errNoBus
 	}
 	rec := st.record()
 	le := binary.LittleEndian
@@ -873,7 +899,7 @@ func (w *Writer) DeclareControl(instrument, kind string) error {
 	if w.controls == nil {
 		return errNoTX
 	}
-	if instrument == "" || instrument == w.cfg.Bus || w.controls[instrument] != nil {
+	if instrument == "" || (instrument == w.cfg.Bus && !w.cfg.NoBus) || w.controls[instrument] != nil {
 		return nil
 	}
 	st := &stream{s: controlSchema(instrument, kind)}

@@ -23,8 +23,6 @@ package monitor
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -38,7 +36,6 @@ import (
 	"github.com/trukeio/ktest/channel"
 	"github.com/trukeio/ktest/contract"
 	"github.com/trukeio/ktest/expr"
-	"github.com/trukeio/ktest/procedure"
 )
 
 // SchemaVersion is the contract schema this package reads.
@@ -131,20 +128,21 @@ var ident = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 // Load reads and checks a contract against the channels it will be evaluated
 // over. It is strict as panel.json is: an unknown key, an input that names
 // no channel, a monitor that reads itself through others, a unit that does
-// not fit — each refuses the whole contract, with a sentence.
-func Load(path string, ch Channels) (*Contract, error) {
+// not fit — each refuses the whole contract, with a sentence. The actions
+// are checked against their resource with check, if it is not nil.
+func Load(path string, ch Channels, check ActionCheck) (*Contract, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	c, err := parse(path, raw, ch)
+	c, err := parse(path, raw, ch, check)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	return c, nil
 }
 
-func parse(path string, raw []byte, ch Channels) (*Contract, error) {
+func parse(path string, raw []byte, ch Channels, check ActionCheck) (*Contract, error) {
 	f, err := contract.Parse(raw)
 	if err != nil {
 		return nil, err
@@ -246,7 +244,7 @@ func parse(path string, raw []byte, ch Channels) (*Contract, error) {
 	}
 	c.Order = order
 
-	if err := c.actions(path, f.Actions); err != nil {
+	if err := c.actions(path, f.Actions, check); err != nil {
 		return nil, err
 	}
 
@@ -406,10 +404,17 @@ func (c *Contract) order() ([]string, error) {
 	return out, nil
 }
 
-// actions checks that every action names a keyword of the resource file.
-// What the keywords may call is the DUT rack's library, which the rack
-// checks when it loads the resource to run them.
-func (c *Contract) actions(path string, acts map[string]string) error {
+// ActionCheck checks a contract's actions against its resource: that each
+// names something the resource defines. resource is the resource's name as
+// the contract gives it, raw its bytes, and actions the contract's action
+// name to what it names. How a resource defines actions is the DUT rack's
+// business: ktestd's are Robot keywords (procedure.CheckActions); another
+// rack's may be anything.
+type ActionCheck func(resource string, raw []byte, actions map[string]string) error
+
+// actions takes the contract's actions and hashes their resource, and has
+// check, if any, hold them to it.
+func (c *Contract) actions(path string, acts map[string]string, check ActionCheck) error {
 	if len(acts) == 0 {
 		if c.Resource != "" {
 			return fmt.Errorf(`"resource" is given, and there are no "actions" to take from it`)
@@ -417,35 +422,27 @@ func (c *Contract) actions(path string, acts map[string]string) error {
 		return nil
 	}
 	if c.Resource == "" {
-		return fmt.Errorf(`"actions" are keywords of a "resource" file, and none is given`)
+		return fmt.Errorf(`"actions" are defined in a "resource" file, and none is given`)
 	}
 	rp := filepath.Join(filepath.Dir(path), c.Resource)
 	b, err := os.ReadFile(rp)
 	if err != nil {
 		return fmt.Errorf("resource: %v", err)
 	}
-	sum := sha256.Sum256(b)
-	c.ResourceHash = hex.EncodeToString(sum[:])
-	f, err := procedure.Parse(c.Resource, string(b))
-	if err != nil {
-		return fmt.Errorf("resource: %v", err)
-	}
-	if len(f.Tests) > 0 {
-		return fmt.Errorf("resource %s has test cases; it holds the actions' keywords and nothing else", c.Resource)
-	}
-	have := map[string]bool{}
-	for _, k := range f.Keywords {
-		have[strings.ToLower(strings.Join(strings.Fields(strings.ReplaceAll(k.Name, "_", " ")), ""))] = true
-	}
+	c.ResourceHash = contract.Hash(b)
 	for _, name := range slices.Sorted(maps.Keys(acts)) {
-		kw := acts[name]
 		if !ident.MatchString(name) {
 			return fmt.Errorf("action %q: a name is a letter, then letters, digits or _", name)
 		}
-		if !have[strings.ToLower(strings.Join(strings.Fields(strings.ReplaceAll(kw, "_", " ")), ""))] {
-			return fmt.Errorf("action %s is keyword %q, which %s does not define", name, kw, c.Resource)
+		if acts[name] == "" {
+			return fmt.Errorf("action %s names nothing in %s", name, c.Resource)
 		}
-		c.Actions[name] = kw
 	}
+	if check != nil {
+		if err := check(c.Resource, b, acts); err != nil {
+			return err
+		}
+	}
+	maps.Copy(c.Actions, acts)
 	return nil
 }

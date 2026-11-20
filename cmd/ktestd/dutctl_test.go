@@ -62,7 +62,7 @@ func dutRack(t *testing.T, actions string) (*dutInst, error) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := monitor.Load(cp, ct)
+	c, err := monitor.Load(cp, ct, procedure.CheckActions)
 	if err != nil {
 		t.Fatal(err)
 	}

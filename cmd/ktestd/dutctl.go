@@ -28,6 +28,7 @@ import (
 	"github.com/trukeio/ktest/procedure"
 	"github.com/trukeio/ktest/procedure/lib"
 	"github.com/trukeio/ktest/record"
+	"github.com/trukeio/ktest/secondary"
 )
 
 // # Modes and actions
@@ -92,68 +93,6 @@ type dutRun struct {
 	stopped atomic.Pointer[string]
 }
 
-// The layouts. mode: t 0–7, seq 8–11, event 12, requested 16–47, applied
-// 48–79, by 80–111, message 112–271. dut.action.<name>: t 0–7, seq 8–11,
-// run 12–15, event 16, outcome 17, via 18, by 24–55, mode 56–87,
-// message 88–247.
-const (
-	mdSeq       = 8
-	mdEvent     = 12
-	mdRequested = 16
-	mdApplied   = 48
-	mdBy        = 80
-	mdMessage   = 112
-	mdBytes     = mdMessage + 160
-
-	acSeq     = 8
-	acRun     = 12
-	acEvent   = 16
-	acOutcome = 17
-	acVia     = 18
-	acBy      = 24
-	acMode    = 56
-	acMessage = 88
-	acBytes   = acMessage + 160
-)
-
-// The events of mode.
-const (
-	modeRequested = 1
-	modeApplied   = 2
-	modeFailed    = 3
-)
-
-func modeSchema() *logb.Schema {
-	return record.Schema("mode", 8*mdBytes, []logb.Field{
-		uintF("seq", mdSeq, 32, "", "the request; 0 for the start"),
-		uintF("event", mdEvent, 8, "", "1 a mode was asked for, 2 it was applied, 3 its entry action failed; 0 the start"),
-		holdF(strF("requested", mdRequested, 32, "the mode last asked for; empty for none")),
-		holdF(strF("applied", mdApplied, 32, "the mode the DUT is in, from the end of its entry action on; empty for none")),
-		strF("by", mdBy, record.HolderMax, "the name that asked"),
-		strF("message", mdMessage, 160, "why an entry action failed"),
-	}, map[string]string{
-		"source": "the ktestd DUT rack",
-		"clock":  "userspace: when it was asked, or when the entry action ended; the monitors settle from the latter",
-	})
-}
-
-func actionSchema(name, keyword string) *logb.Schema {
-	return record.Schema("dut.action."+name, 8*acBytes, []logb.Field{
-		uintF("seq", acSeq, 32, "", "the request that started it"),
-		uintF("run", acRun, 32, "", "the action run, numbered from 1 since the daemon started, across actions"),
-		uintF("event", acEvent, 8, "", "1 it started, 2 it ended"),
-		uintF("outcome", acOutcome, 8, "", "at its end: "+outcomeDesc),
-		uintF("via", acVia, 8, "", "the listener the request came through: 1 the local socket, 2 TLS"),
-		strF("by", acBy, record.HolderMax, "the name that asked"),
-		strF("mode", acMode, 32, "the mode it is the entry action of; empty for an action asked for"),
-		strF("message", acMessage, 160, "at its end: why it failed"),
-	}, map[string]string{
-		"source":  "the ktestd DUT rack",
-		"keyword": keyword,
-		"clock":   "userspace: when it started and ended",
-	})
-}
-
 func dutStepSchema() *logb.Schema {
 	s := procStepSchema()
 	s.Name = "dut.step"
@@ -204,7 +143,7 @@ func (di *dutInst) bind(d *daemon, table *channel.Table) {
 // declare lays out the DUT rack's streams, and states no mode from the start.
 func (di *dutInst) declare(w *tee, t time.Time) error {
 	var err error
-	if di.mode, err = w.NewStream(modeSchema); err != nil {
+	if di.mode, err = w.NewStream(func() *logb.Schema { return secondary.ModeSchema(dutSource) }); err != nil {
 		return err
 	}
 	if di.step, err = w.NewStream(dutStepSchema); err != nil {
@@ -213,7 +152,7 @@ func (di *dutInst) declare(w *tee, t time.Time) error {
 	di.actions = map[string]*teeStream{}
 	for _, a := range slices.Sorted(maps.Keys(di.c.Actions)) {
 		kw := di.c.Actions[a]
-		if di.actions[a], err = w.NewStream(func() *logb.Schema { return actionSchema(a, kw) }); err != nil {
+		if di.actions[a], err = w.NewStream(func() *logb.Schema { return secondary.ActionSchema(a, kw, dutSource) }); err != nil {
 			return err
 		}
 	}
@@ -222,27 +161,19 @@ func (di *dutInst) declare(w *tee, t time.Time) error {
 
 func (di *dutInst) writeMode(w *tee, t time.Time, seq uint32, ev byte, who caller, msg string) error {
 	return w.Write(t, di.mode, func(rec []byte) {
-		putUint32(rec[mdSeq:], seq)
-		rec[mdEvent] = ev
-		putStr(rec, mdRequested, 32, di.requested)
-		putStr(rec, mdApplied, 32, di.applied)
-		putStr(rec, mdBy, record.HolderMax, who.name)
-		putStr(rec, mdMessage, 160, msg)
+		secondary.PutMode(rec, secondary.ModeRecord{Seq: seq, Event: ev, Requested: di.requested,
+			Applied: di.applied, By: who.name, Message: msg})
 	})
 }
 
 func (di *dutInst) writeAction(w *tee, t time.Time, run *dutRun, ev byte, o procedure.Outcome, msg string) error {
 	return w.Write(t, di.actions[run.action], func(rec []byte) {
-		putUint32(rec[acSeq:], run.seq)
-		putUint32(rec[acRun:], run.n)
-		rec[acEvent] = ev
-		rec[acOutcome] = outcomeCode(o)
-		rec[acVia] = byte(run.who.via)
-		putStr(rec, acBy, record.HolderMax, run.who.name)
+		a := secondary.ActionRecord{Seq: run.seq, Run: run.n, Event: ev, Outcome: outcomeCode(o),
+			Via: byte(run.who.via), By: run.who.name, Message: msg}
 		if run.mode != nil {
-			putStr(rec, acMode, 32, *run.mode)
+			a.Mode = *run.mode
 		}
-		putStr(rec, acMessage, 160, msg)
+		secondary.PutAction(rec, a)
 	})
 }
 
@@ -252,7 +183,7 @@ func (l *loop) dutRequest(in *inst, r *request, t time.Time) reply {
 	di := in.dut
 	if r.kind == reqDutMode {
 		di.requested = r.name
-		if err := di.writeMode(l.w, t, l.seq, modeRequested, r.who, ""); err != nil {
+		if err := di.writeMode(l.w, t, l.seq, secondary.ModeRequested, r.who, ""); err != nil {
 			fatalf("write: %v", err)
 		}
 		action := ""
@@ -280,7 +211,7 @@ func (l *loop) applyMode(di *dutInst, mode string, seq uint32, who caller, t tim
 	// (measured: 9 ns after 2 s). Without it both say the same instant.
 	t = t.Round(0)
 	di.applied = mode
-	if err := di.writeMode(l.w, t, seq, modeApplied, who, ""); err != nil {
+	if err := di.writeMode(l.w, t, seq, secondary.ModeApplied, who, ""); err != nil {
 		fatalf("write: %v", err)
 	}
 	if l.mon != nil {
@@ -337,7 +268,7 @@ func (d *daemon) execute(ctx context.Context, di *dutInst, run *dutRun, timeout 
 			l.applyMode(di, *run.mode, run.seq, run.who, t)
 			return
 		}
-		if err := di.writeMode(l.w, t, run.seq, modeFailed, run.who,
+		if err := di.writeMode(l.w, t, run.seq, secondary.ModeFailed, run.who,
 			fmt.Sprintf("entry action %s: %s: %s", run.action, res.Outcome, msg)); err != nil {
 			fatalf("write: %v", err)
 		}

@@ -14,6 +14,7 @@ import (
 	"github.com/trukeio/logb"
 
 	"github.com/trukeio/ktest/channel"
+	"github.com/trukeio/ktest/procedure"
 )
 
 const ms = int64(1e6)
@@ -81,7 +82,7 @@ func table() *channel.Table {
 
 func load(t *testing.T, js string) (*Contract, error) {
 	t.Helper()
-	return parse("dut-interface.json", []byte(js), table())
+	return parse("dut-interface.json", []byte(js), table(), procedure.CheckActions)
 }
 
 func mustLoad(t *testing.T, js string) *Contract {
@@ -184,7 +185,7 @@ func TestExampleContract(t *testing.T) {
 	p := filepath.Join(dir, "dut-interface.json")
 	os.WriteFile(p, []byte(example), 0o644)
 	os.WriteFile(filepath.Join(dir, "actions.robot"), []byte(actions), 0o644)
-	c, err := Load(p, table())
+	c, err := Load(p, table(), procedure.CheckActions)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,7 +251,7 @@ func TestContractRefusals(t *testing.T) {
 		{"enum on a number", `{"contract": "c", "schema": 1, "inputs": {"Vx": {"channel": "psu1.ch1.meas.v", "enum": "e"}}, "monitors": {"a": {"ok": "True"}}, "enums": {"e": ["a"]}}`,
 			"enum e is read from text, and psu1.ch1.meas.v is a number in V"},
 		{"actions without resource", `{"contract": "c", "schema": 1, "inputs": {"Vx": "psu1.ch1.meas.v"}, "monitors": {"a": {"ok": "True"}}, "actions": {"x": "X"}}`,
-			`"actions" are keywords of a "resource" file`},
+			`"actions" are defined in a "resource" file`},
 		{"mode action", `{"contract": "c", "schema": 1, "inputs": {"Vx": "psu1.ch1.meas.v"}, "monitors": {"a": {"ok": "True"}}, "modes": {"m": {"action": "go"}}}`,
 			`mode m enters with action "go", which "actions" does not declare`},
 		{"timeout name", `{"contract": "c", "schema": 1, "inputs": {"Vx": "psu1.ch1.meas.v"}, "monitors": {"a": {"ok": "True"}}, "timeouts": {"zz": "1s"}}`,
@@ -380,7 +381,7 @@ func TestPurity(t *testing.T) {
 	p := filepath.Join(dir, "dut-interface.json")
 	os.WriteFile(p, []byte(example), 0o644)
 	os.WriteFile(filepath.Join(dir, "actions.robot"), []byte(actions), 0o644)
-	c, err := Load(p, table())
+	c, err := Load(p, table(), procedure.CheckActions)
 	if err != nil {
 		t.Fatal(err)
 	}

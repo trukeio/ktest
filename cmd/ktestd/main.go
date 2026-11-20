@@ -239,6 +239,7 @@ import (
 	"github.com/trukeio/ktest/psu"
 	"github.com/trukeio/ktest/record"
 	dso "github.com/trukeio/ktest/scope"
+	"github.com/trukeio/ktest/secondary"
 	"github.com/trukeio/ktest/stream"
 	"github.com/trukeio/ktest/web"
 )
@@ -526,9 +527,9 @@ func main() {
 			fatalf("contract: %q is the DUT rack's own instrument; give the supply or scope another name", dutName)
 		}
 		for _, n := range c.Order {
-			ct.Stream(monSchema(c, n))
+			ct.Stream(secondary.MonSchema(c, n, monSource))
 		}
-		ct.Stream(modeSchema())
+		ct.Stream(secondary.ModeSchema(dutSource))
 		stub := &daemon{bus: iface, db: cfg.DB, supplies: map[string]int{}, scopes: map[string]int{}}
 		for _, s := range supplies {
 			stub.supplies[s.name] = s.channels

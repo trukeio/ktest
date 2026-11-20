@@ -3,14 +3,10 @@
 package main
 
 import (
-	"encoding/binary"
-	"fmt"
 	"net/http"
 	"os"
-	"path"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/trukeio/logb"
@@ -19,7 +15,9 @@ import (
 	"github.com/trukeio/ktest/channel"
 	"github.com/trukeio/ktest/monitor"
 	"github.com/trukeio/ktest/peer"
+	"github.com/trukeio/ktest/procedure"
 	"github.com/trukeio/ktest/record"
+	"github.com/trukeio/ktest/secondary"
 	"github.com/trukeio/ktest/stream"
 )
 
@@ -98,7 +96,7 @@ func declareDecoded(t *channel.Table, bus string, db *dbc.File) error {
 // loadContract loads -contract and states it in the recording: name, hash and
 // source, the resource's hash, and both files embedded, as limits.json is.
 func loadContract(p string, ch *channel.Table, cfg *record.Config) (*monitor.Contract, error) {
-	c, err := monitor.Load(p, ch)
+	c, err := monitor.Load(p, ch, procedure.CheckActions)
 	if err != nil {
 		return nil, err
 	}
@@ -136,107 +134,29 @@ type dutMon struct {
 	lastWM int64
 }
 
-// The layouts. mon.<name>: t 0–7, state 8, from 9, cause 16–79.
-// mon.watermark: t 0–7, upto 8–15. mon.gap: t 0–7, from 8–15, to 16–23,
-// lost 24–27, reason 32–127.
+// The DUT rack's streams, as package secondary lays them out for every DUT
+// rack, ktestd's included (doc/peer-protocol.md §7.4).
 const (
-	monState = 8
-	monFrom  = 9
-	monCause = 16
-	monBytes = monCause + 64
-
-	wmUpto  = 8
-	wmBytes = 16
-
-	gapFrom   = 8
-	gapTo     = 16
-	gapLost   = 24
-	gapReason = 32
-	gapBytes  = gapReason + 96
+	monSource = "the ktestd monitor evaluator"
+	dutSource = "the ktestd DUT rack"
 )
-
-// stateText is the states by the number the recording gives them.
-func stateText() logb.ValueToText {
-	c := logb.ValueToText{Default: "?"}
-	for i, s := range monitor.States {
-		c.Keys = append(c.Keys, float64(i))
-		c.Texts = append(c.Texts, string(s))
-	}
-	return c
-}
-
-func stateCode(s monitor.State) byte {
-	for i, x := range monitor.States {
-		if x == s {
-			return byte(i)
-		}
-	}
-	return byte(len(monitor.States))
-}
-
-func monSchema(c *monitor.Contract, name string) *logb.Schema {
-	m := c.Monitors[name]
-	desc := "ok: " + m.OK
-	if m.Debounce > 0 {
-		desc += fmt.Sprintf("; debounce %v", m.Debounce)
-	}
-	if len(m.Modes) > 0 {
-		desc += "; in modes " + strings.Join(m.Modes, ", ")
-	}
-	return record.Schema("mon."+name, 8*monBytes, []logb.Field{
-		{Name: "state", BitOffset: 8 * monState, BitWidth: 8, Type: logb.TypeUint, Hold: true, Conv: stateText(),
-			Desc: "the monitor's state from this record on: " + desc},
-		{Name: "from", BitOffset: 8 * monFrom, BitWidth: 8, Type: logb.TypeUint, Conv: stateText(),
-			Desc: "the state before"},
-		strF("cause", monCause, 64, "what was evaluated: a stream's sample, a deadline, a mode, a gap"),
-	}, map[string]string{
-		"source":   "the ktestd monitor evaluator, contract " + c.Name,
-		"contract": c.Hash,
-		"clock": "the time of the sample or the deadline that caused the transition, " +
-			"never the time it was evaluated (handoff §4.3)",
-	})
-}
-
-func watermarkSchema() *logb.Schema {
-	return record.Schema("mon.watermark", 8*wmBytes, []logb.Field{
-		{Name: "upto", BitOffset: 8 * wmUpto, BitWidth: 64, Type: logb.TypeSint, Unit: "ns", Hold: true,
-			Desc: "every monitor transition at or before this time, Unix nanoseconds, has been recorded"},
-	}, map[string]string{
-		"source": "the ktestd monitor evaluator",
-		"clock":  "the watermark itself: the daemon's clock less the evaluator's reorder window",
-	})
-}
-
-func gapSchema() *logb.Schema {
-	return record.Schema("mon.gap", 8*gapBytes, []logb.Field{
-		{Name: "from", BitOffset: 8 * gapFrom, BitWidth: 64, Type: logb.TypeSint, Unit: "ns",
-			Desc: "the first record the evaluator did not use, by its own time, Unix nanoseconds"},
-		{Name: "to", BitOffset: 8 * gapTo, BitWidth: 64, Type: logb.TypeSint, Unit: "ns", Desc: "the last"},
-		uintF("lost", gapLost, 32, "", "how many records"),
-		strF("reason", gapReason, 96, "overflow: the evaluator's queue was full; late: a record behind the watermark"),
-	}, map[string]string{
-		"source": "the ktestd monitor evaluator",
-		"clock": "the watermark when the gap was noticed: every monitor is unknown from here " +
-			"until its inputs are known again",
-	})
-}
 
 // declare lays out the monitor streams and states every monitor unknown from
 // the start, so that a reader meets each one held from the first segment.
 func (m *dutMon) declare(w *tee, t time.Time) error {
 	m.mons = map[string]*teeStream{}
 	for _, name := range m.c.Order {
-		s, err := w.NewStream(func() *logb.Schema { return monSchema(m.c, name) })
+		s, err := w.NewStream(func() *logb.Schema { return secondary.MonSchema(m.c, name, monSource) })
 		if err != nil {
 			return err
 		}
 		m.mons[name] = s
 	}
 	var err error
-	if m.wm, err = w.NewStream(watermarkSchema); err != nil {
+	if m.wm, err = w.NewStream(func() *logb.Schema { return secondary.WatermarkSchema(monSource) }); err != nil {
 		return err
 	}
-	if m.gap, err = w.NewStream(gapSchema); err != nil {
+	if m.gap, err = w.NewStream(func() *logb.Schema { return secondary.GapSchema(monSource) }); err != nil {
 		return err
 	}
 	for _, name := range m.c.Order {
@@ -249,11 +169,7 @@ func (m *dutMon) declare(w *tee, t time.Time) error {
 }
 
 func (m *dutMon) transition(w *tee, x monitor.Transition) error {
-	return w.Write(time.Unix(0, x.T), m.mons[x.Monitor], func(rec []byte) {
-		rec[monState] = stateCode(x.To)
-		rec[monFrom] = stateCode(x.From)
-		putStr(rec, monCause, 64, x.Cause)
-	})
+	return w.Write(time.Unix(0, x.T), m.mons[x.Monitor], func(rec []byte) { secondary.PutTransition(rec, x) })
 }
 
 // write records what the evaluator produced: its transitions, the gap that
@@ -265,21 +181,14 @@ func (m *dutMon) write(w *tee, o monitor.Output) {
 		}
 	}
 	if g := o.Gap; g != nil {
-		err := w.Write(time.Unix(0, g.T), m.gap, func(rec []byte) {
-			binary.LittleEndian.PutUint64(rec[gapFrom:], uint64(g.From))
-			binary.LittleEndian.PutUint64(rec[gapTo:], uint64(g.To))
-			binary.LittleEndian.PutUint32(rec[gapLost:], uint32(min(g.Lost, 1<<32-1)))
-			putStr(rec, gapReason, 96, g.Reason)
-		})
+		err := w.Write(time.Unix(0, g.T), m.gap, func(rec []byte) { secondary.PutGap(rec, g) })
 		if err != nil {
 			fatalf("write: %v", err)
 		}
 	}
 	if wm := o.Watermark; wm != 0 && wm > m.lastWM {
 		m.lastWM = wm
-		err := w.Write(time.Unix(0, wm), m.wm, func(rec []byte) {
-			binary.LittleEndian.PutUint64(rec[wmUpto:], uint64(wm))
-		})
+		err := w.Write(time.Unix(0, wm), m.wm, func(rec []byte) { secondary.PutWatermark(rec, wm) })
 		if err != nil {
 			fatalf("write: %v", err)
 		}
@@ -298,29 +207,13 @@ func (m *dutMon) write(w *tee, o monitor.Output) {
 // without them. A subscriber that falls behind is disconnected, as on
 // /stream/live, and the recording is unaffected.
 
-// alwaysSent are the streams every /stream/sub subscriber is sent.
-var alwaysSent = []string{"mon.watermark", "mon.gap", "mode", "mode.*"}
-
 func streamSub(hub *stream.Hub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		globs := append([]string(nil), alwaysSent...)
-		for _, g := range strings.Split(r.URL.Query().Get("ch"), ",") {
-			if g = strings.TrimSpace(g); g == "" {
-				continue
-			}
-			if _, err := path.Match(g, ""); err != nil {
-				httpError(w, http.StatusBadRequest, 0, "ch: %q is not a stream name or a glob: %v", g, err)
-				return
-			}
-			globs = append(globs, g)
+		filter, err := secondary.SubFilter(r.URL.Query().Get("ch"))
+		if err != nil {
+			httpError(w, http.StatusBadRequest, 0, "%v", err)
+			return
 		}
-		hub.ServeStreams(w, r, func(name string) bool {
-			for _, g := range globs {
-				if ok, _ := path.Match(g, name); ok {
-					return true
-				}
-			}
-			return false
-		})
+		hub.ServeStreams(w, r, filter)
 	}
 }
