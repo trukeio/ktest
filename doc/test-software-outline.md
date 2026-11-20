@@ -1565,6 +1565,20 @@ opinion rather than the same answer arrived at cheaply.
    one `LState` per run on a goroutine of its own, bounded with `context`, and
    never in the timing-critical path.
 
+6. **The peer protocol** (2026-11-20). The interface between the racks is
+   now a specification of its own, `doc/peer-protocol.md`, version 1, written
+   so that either rack may be a program other than `ktestd`, with libraries for
+   each side: `peer` for a master (`ktestd -peer` runs on it) and `secondary`
+   for a DUT rack (`examples/library-rack`, a DUT rack in under 300 lines,
+   is driven unchanged by the two-rack demo's lab rack). `peer-conformance`
+   checks either side from outside, and `logbcheck -faults` holds a lab
+   rack's protection to the faults it was put through; `ktestd` passes both.
+   One lab rack drives several DUT racks (`-peer` once for each, `dut=` on
+   the DUT keywords, rules over any rack; `examples/two-duts`). Not done:
+   `ktestd -contract` keeps its own loop rather than running on
+   `secondary.Server`, so the two DUT racks share layouts, evaluator and
+   checks but not their request handling.
+
 The failure mode to avoid is five things at 70%. Build one specific configuration
 end to end before generalising anything; the generality extracted from two working
 cases will be right, and the generality designed before the first will not.

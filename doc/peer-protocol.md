@@ -447,7 +447,15 @@ The master MUST record, with its own clock:
 - link state;
 - rule firings.
 
-### 9.7 What a master MUST NOT do
+### 9.7 Several DUT racks
+
+A master MAY drive several DUT racks, as a lab does with several DUTs in one chamber or on one supply. The protocol is between the master and each rack, unchanged:
+
+- Each rack has its own link, contract check, lease, clock offset and subscription. The master MUST check each contract on its own (§9.1), and MUST record each rack's records and judgements so that they can be told apart (`ktestd`: under the name given to the rack).
+- When the stress is shared, a protection rule (§9.4) MUST hold while it holds for any of the racks the stress reaches, and its recorded cause SHOULD name the rack.
+- Every operation a procedure makes on a DUT MUST say which rack it is about. A master MAY let a procedure for one rack leave it out.
+
+### 9.8 What a master MUST NOT do
 
 - send anything to the DUT except through §6;
 - run DUT operation itself: it changes modes and runs actions only;
@@ -471,6 +479,8 @@ The secondary decides how actions are implemented. It MUST give each action a ti
 
 From a sample arriving to the resulting transition being on the wire SHOULD take under 5 ms at the 99th percentile on loopback. A secondary SHOULD measure and publish this figure.
 
+The figure is bounded below by the reorder window (§5.6): a secondary that stamps its inputs in the kernel can keep a window of a few milliseconds; one that stamps them in user space needs a wider one, and trades latency for fewer gaps. `secondary.Server` defaults to 20 ms for that reason, and a master's watermark age (§9.4) must exceed whatever the window is. `peer-conformance secondary` reports the latency it measures (§12).
+
 ## 11. Versioning
 
 - The **contract schema** is `"schema": 1` (§3).
@@ -488,9 +498,9 @@ peer-conformance secondary -url https://host:port -cacert rack.pem -contract dut
     -token operate.token [-other operate2.token] [-view view.token] [-mode m] [-action a]
 ```
 
-It acts as a master and checks §2 (tokens and roles), §3.3 (hashes), §5.1 and §5.6 (state codes, the watermark's order and cadence), §6 (every endpoint, every refusal and its status and number, the lease, arming, a mode entered and left and an action run, each with its records under its number), §7 (the stream's format, metadata and the layouts of §7.4) and §11. It takes the lease, arms, changes the mode and disarms: run it on a bench, never during a test. `-action` runs an action on the DUT; without it, none is run.
+It acts as a master and checks §2 (tokens and roles), §3.3 (hashes), §5.1 and §5.6 (state codes, the watermark's order and cadence), §6 (every endpoint, every refusal and its status and number, the lease, arming, a mode entered and left, an action run and a second refused while it runs, each with its records under its number, and a lease that runs out stopping nothing), §7 (the stream's format, metadata and the layouts of §7.4) and §11. It measures §10.4's latency through the clocks' offset and reports it, without judging it. It takes the lease, arms, changes the mode and disarms: run it on a bench, never during a test. `-action` runs an action on the DUT, twice; without it, none is run. Give one that takes some time, such as a reset, or the busy check is skipped.
 
-The monitors' semantics (§5) are checked on the secondary's recording: `monitor-check -live dut-interface.json recording.logb` replays it through the reference evaluator, which must give every transition the secondary recorded live, to the nanosecond.
+The monitors' semantics (§5) are checked on the secondary's recording: `monitor-check -live dut-interface.json recording.logb` replays it through the reference evaluator, which must give every transition the secondary recorded live, to the nanosecond, up to the first record a gap lost. Gaps themselves (§5.7) cannot be provoked from outside a rack; they are covered by the reference evaluator's own tests, and by `monitor-check` on any recording that has one.
 
 **A master:**
 
@@ -498,7 +508,9 @@ The monitors' semantics (§5) are checked on the secondary's recording: `monitor
 peer-conformance master [-addr 127.0.0.1:8446] [-dir conformance] [-phase 3s]
 ```
 
-It runs a reference secondary, prints the settings for the master to connect to it, and puts the master through each fault in turn, with a quiet phase after each: `abort` going `dev`; the rack frozen, its watermark stopped; the link lost; the rack coming back with another contract; and with another protocol version. It checks what a secondary can see (§8 clock sampling, §9.1 the contract asked for before anything proceeds, and nothing proceeding against another contract or version, §9.2 lease renewal, §9.3 the contract asked for again on every reconnection, §9.4 a subscription that includes the abort monitor). What the master does about each fault (§9.4: removing the stress) happens in its own world: the report's timeline says when each fault began and ended, and the master's own recording must show each rule taking hold within its configured age of the fault, and clearing after it.
+It runs a reference secondary, prints the settings for the master to connect to it, and puts the master through each fault in turn, with a quiet phase after each: `abort` going `dev`; the rack frozen, its watermark stopped; the link lost; the rack coming back with another contract; and with another protocol version. It checks what a secondary can see (§8 clock sampling, §9.1 the contract asked for before anything proceeds, and nothing proceeding against another contract or version, §9.2 lease renewal, §9.3 the contract asked for again on every reconnection, §9.4 a subscription that includes the abort monitor).
+
+What the master does about each fault (§9.4: removing the stress) happens in its own world, so the run writes `faults.json` beside the master's settings: each fault's kind, start and end, by the reference rack's clock. The master's own recording must show, for each fault, its rule (`dut_abort` for an abort, `monitoring_lost` for the rest) taking hold soon after the start — for a frozen rack, within the watermark age — holding, and clearing after the end. For `ktestd`, `logbcheck -faults faults.json master.logb /dev/null` checks exactly that, putting the fault times on the master's clock through the offset it recorded; another master checks its own recording against the same file.
 
 The kit is held to this repository's implementations: `secondary.Server`, `ktestd -contract`, `peer`'s master and `ktestd -peer` all pass it, and implementations broken on purpose fail it where they are broken.
 
@@ -514,7 +526,9 @@ The kit is held to this repository's implementations: `secondary.Server`, `ktest
 | §9.4 rules | `limits.json` `rules`: `monitoring_lost`, `dut_abort`, `remove_stress` |
 | §9.6 recorded names | `<peer>.<stream>` with `peer_t` and `restated`; `<peer>.link`; `<peer>.clock`; `rules` |
 | §4.4 window limit | fixed per call site in package `expr` |
-| §10.4 latency | measured with `cmd/sublat` |
+| §10.4 latency | 2.8 ms at the 99th percentile on loopback, by `peer-conformance`; also `cmd/sublat` |
+| §9.7 several racks | `-peer` once for each; DUT keywords take `dut=`; rules hold for any rack and name it |
+| §12 conformance | 43 of 43 secondary checks; 10 of 10 master checks; `logbcheck -faults` holds its rules to the faults |
 
 ## 14. Go libraries
 
@@ -525,8 +539,16 @@ The kit is held to this repository's implementations: `secondary.Server`, `ktest
 | `peer` | a master: `Client`, `Link`, `View`, `DUT`, `Guard` (§6–§9) | done; `ktestd -peer` runs on it |
 | `monitor` | a secondary: contract loader and evaluator (§3, §5); how actions are defined is a hook, `ActionCheck` | done |
 | `conformance` | checking either side from the outside; `cmd/peer-conformance` (§12) | done |
-| `secondary` | a secondary: `Server`, over the host's streams and an `Actions` it runs (§5–§7, §10); the record layouts of §7.4 and the `/stream/sub` filter, which `ktestd -contract` shares | done |
+| `secondary` | a secondary: `Server`, over the host's streams and an `Actions` it runs (§5–§7, §10); `LoadTokens` and `SelfSigned`, as `ktestd` does them; the record layouts of §7.4 and the `/stream/sub` filter, which `ktestd -contract` shares | done |
+| `procedure/lib` | a master's procedures: the DUT keywords over one rack (`AddDUT`) or several (`AddDUTs`, §9.7) | done |
 
-A program that is a DUT rack declares its streams with `record.Schema`, gives `secondary.New` the contract, its streams, an `Actions` and an `Auth`, serves `Server.Handler` over TLS, and writes its records with `Server.Write`. The server's reorder window (`Config.Window`, 20 ms by default) must exceed the longest the program takes between a record's time and writing it; a later record is a gap.
+A program that is a DUT rack declares its streams with `record.Schema`, gives `secondary.New` the contract, its streams, an `Actions` and an `Auth` (`secondary.LoadTokens` reads `ktestd`'s tokens file), serves `Server.Handler` over TLS (`secondary.SelfSigned` makes a certificate), and writes its records with `Server.Write`. The server's reorder window (`Config.Window`, 20 ms by default) must exceed the longest the program takes between a record's time and writing it; a later record is a gap. `examples/library-rack` is one, in under 300 lines.
 
-`ktestd -contract` keeps its own event loop, which it shares with its bus and instruments, and so is not built on `secondary.Server`; both are held to the same layouts and the same evaluator, and `monitor-check -live` checks either's recording.
+`ktestd -contract` keeps its own event loop, which it shares with its bus and instruments, and so is not built on `secondary.Server`; both are held to the same layouts, the same evaluator and the same conformance checks.
+
+## 15. Open points
+
+- An NDJSON rendering of `/stream/sub`, for masters without a Logb decoder. Logb has readers in Go and Python.
+- Monitors written as state machines rather than expressions, for devices that need one.
+- When several inputs go stale at one instant, a transition's `cause` names the first only. States and times are right.
+- One DUT rack with several DUTs, each with its own contract. Today a rack runs one contract; several DUTs need several racks (§9.7), which may share a machine.

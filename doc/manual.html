@@ -362,7 +362,7 @@ $ git clone https://github.com/trukeio/ktest ~/go/src/github.com/trukeio/ktest
 $ cd ~/go/src/github.com/trukeio/ktest
 $ go build -o bin/ ./cmd/...
 $ ls bin
-canlogb  dutsim  ktestd  logbcheck  monitor-check  psusim  scopesim  vcanprobe</code></pre>
+canlogb  dutsim  ktestd  logbcheck  monitor-check  peer-conformance  psusim  scopesim  sublat  vcanprobe</code></pre>
 <p>For a small ARM board, cross-compile on any machine and copy the binary over:</p>
 <pre class="code"><code>$ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build ./cmd/ktestd ./cmd/vcanprobe</code></pre>
 <p>To test bus work without hardware, install <code>can-utils</code> (<code>candump</code>, <code>canplayer</code>, <code>cangen</code>) and make a virtual bus:</p>
@@ -612,7 +612,7 @@ $ claude mcp add ktest -- ktest-mcp -url https://rack:8443 \
 <tr><td><code>-locked file</code></td><td>engineering mode</td><td>with <code>-procedures</code>: the sums a validated configuration had; each run is accredited, refused or marked (<a href="#scripts">§1.5</a>)</td></tr>
 <tr><td><code>-lock-hashes</code></td><td></td><td>with <code>-procedures</code>: write the <code>-locked</code> file this configuration would need to stdout, and exit</td></tr>
 <tr><td><code>-contract file</code></td><td></td><td>a DUT contract, <code>dut-interface.json</code>: run its monitors live, as a DUT rack (<a href="#dut-rack">below</a>)</td></tr>
-<tr><td><code>-peer name=https://host:port,token=file,cacert=file,contract=file</code></td><td></td><td>a DUT rack to drive, as a lab rack: its contract checked at start, its monitors mirrored, the rules of <code>limits.json</code> applied (<a href="#lab-rack">below</a>)</td></tr>
+<tr><td><code>-peer name=https://host:port,token=file,cacert=file,contract=file</code></td><td></td><td>a DUT rack to drive, as a lab rack: its contract checked at start, its monitors mirrored, the rules of <code>limits.json</code> applied (<a href="#lab-rack">below</a>); repeatable, once for each DUT rack</td></tr>
 <tr><td><code>-mon-window</code>, <code>-mon-tick</code>, <code>-watermark</code>, <code>-mon-queue</code></td><td>2 ms, 1 ms, 10 ms, 8192</td><td>with <code>-contract</code>: how long a record waits for earlier ones from other clocks; how often the monitors are given the daemon's clock; how often <code>mon.watermark</code> is recorded; how many records may wait for the monitors</td></tr>
 <tr><td><code>-sock path</code></td><td><code>/run/ktest.sock</code></td><td>the local control socket</td></tr>
 <tr><td><code>-https addr</code></td><td></td><td>control, streams and the rack over TLS, with tokens</td></tr>
@@ -634,11 +634,18 @@ $ claude mcp add ktest -- ktest-mcp -url https://rack:8443 \
 <p>Records a bus to a Logb file and can serve it live, and does nothing else. It has no control plane, so it cannot put anything on the bus and does not have to be trusted not to. Use it where a recorder is all that is wanted.</p>
 <h4><code>monitor-check</code>: replay a recording through a DUT contract</h4>
 <pre class="code"><code>monitor-check [-json] [-live] [-expect ok | -expect dev@t1,t2,...] [-tol 50ms] [-mode mode.applied] dut-interface.json recording.logb</code></pre>
-<p>Replays a recording through the monitors a DUT contract declares, with the same evaluator the DUT rack will run live, and prints every transition: when, which monitor, from what to what, and why (a stream's sample, a debounce running out, an input going stale). The evaluator reads no clock, so a replay gives the transitions the live run gave, to the nanosecond, and a contract can be tried on yesterday's recording before it is signed off. <code>-expect ok</code> fails if any monitor deviates; <code>-expect dev@2.55,5.15</code> fails unless a deviation begins near each time given, and only there. <code>-live</code>, on a recording made by a DUT rack, fails unless the transitions the rack recorded live are the replay's, to the nanosecond, up to its last watermark and its first gap. <span class="st built">built</span></p>
+<p>Replays a recording through the monitors a DUT contract declares, with the same evaluator the DUT rack will run live, and prints every transition: when, which monitor, from what to what, and why (a stream's sample, a debounce running out, an input going stale). The evaluator reads no clock, so a replay gives the transitions the live run gave, to the nanosecond, and a contract can be tried on yesterday's recording before it is signed off. <code>-expect ok</code> fails if any monitor deviates; <code>-expect dev@2.55,5.15</code> fails unless a deviation begins near each time given, and only there. <code>-live</code>, on a recording made by a DUT rack, fails unless the transitions the rack recorded live are the replay's, to the nanosecond, up to its last watermark and the first record a gap lost. It works on any DUT rack's recording, <code>ktestd</code>'s or another program's. <span class="st built">built</span></p>
 <h4><code>logbcheck</code>: hold a recording to an independent account</h4>
 <pre class="code"><code>logbcheck [-tx log] [-cyclic] [-control] [-psu name=transcript] [-scope name=transcript]
+          [-judgements] [-dutsim [point=]transcript]... [-faults faults.json [-faults-peer name]]
           recording.logb candump.log</code></pre>
 <p>Checks a recording against references that nothing in Ktest wrote: a <code>candump</code> log of the bus, a simulator's transcript. <code>-control</code> checks every control decision against the limits the recording itself declares. Give <code>/dev/null</code> as the log when there is no bus reference.</p>
+<p>On a lab rack's recording: <code>-judgements</code> replays every answer a DUT's monitors gave a keyword from the mirrored states, each rack's from its own; <code>-dutsim point=transcript</code> holds the step results recorded at a point to <code>dutsim</code>'s account of what the DUT did, once for each DUT; <code>-faults faults.json</code> holds the rack's protection rules to the faults <code>peer-conformance master</code> put it through (<a href="#peer-protocol">§3.6</a>): each rule taking hold within <code>-react</code> (250 ms) of its fault, holding, and clearing within <code>-recover</code> (5 s) of its end.</p>
+<h4><code>peer-conformance</code>: check either side of the peer protocol</h4>
+<pre class="code"><code>peer-conformance secondary -url https://rack:8445 -cacert rack.pem -contract dut-interface.json \
+    -token op.token [-other op2.token] [-view view.token] [-mode m] [-action a]
+peer-conformance master [-addr 127.0.0.1:8446] [-dir conformance] [-phase 3s]</code></pre>
+<p>Checks a DUT rack or a lab rack against <code>doc/peer-protocol.md</code>, over the network, whatever program it is. <code>secondary</code> acts as a lab rack and makes 43 checks: tokens and roles, the contract's hashes, the protocol version, the clock, the subscription's format and record layouts, the watermark's cadence, the lease, every refusal, arming, a mode, an action and a second one refused while it runs, a lapsed lease stopping nothing; and it measures how late transitions arrive. It takes the lease and changes the mode: run it on a bench. <code>master</code> runs a reference DUT rack, prints the <code>-peer</code> settings to give the lab rack, injects five faults (abort, a frozen rack, a lost link, another contract, another protocol version), checks what a DUT rack can see of the lab rack's answers, and writes <code>faults.json</code> for <code>logbcheck -faults</code>. Either exits 1 if a check failed. <span class="st built">built</span></p>
 <h4><code>psusim</code>, <code>scopesim</code>: instruments without hardware</h4>
 <pre class="code"><code>psusim   [-addr :5025] [-channels 30:3:10,6:5:100] [-transcript file]
 scopesim [-addr :5026] [-channels 'sine:amp=1,freq=1000;dc:amp=0'] [-on 1] [-transcript file]</code></pre>
@@ -661,7 +668,7 @@ $ $K -X POST -H "Ktest-Lease: $T" http://ktest/dut/actions/reset             # r
 <p>An action is a keyword of the contract's <code>resource</code> file, run by the daemon one at a time, with a timeout from the contract's <code>timeouts</code> (30 s otherwise). It may use <code>Settle</code>, <code>Send Message    message    ${SIGNALS}</code>, <code>Start Cyclic    message    period    ${SIGNALS}</code>, <code>Stop Cyclic    message</code>, <code>Set Channel    psu1.ch1.v.set    12V</code>, <code>Wait For Monitor    alive    state=ok    timeout=10s</code>, and <code>Log</code>, <code>Fail</code>, <code>Set Variable</code>, <code>Should Be True</code>. Signals are a dictionary from the Variables (<code>&amp;{RESET}    Request=1</code>), in the signal's own unit. The resource is checked when the daemon starts. What an action does goes through the control plane like any client's request, recorded with <code>via</code> 4 and the name that asked, and held to the limits.</p>
 <p>The DUT goes on running when its master goes. A lapsed dut lease leaves <code>dut</code> armed and the DUT rack's cyclic tasks running; a lapsed bus lease stops only its holder's tasks. <code>POST /dut/disarm</code> or the stop ends the action under way and every task the DUT rack holds. Recorded: <code>mode</code> (requested and applied, held), <code>dut.action.&lt;name&gt;</code> (each run's start, and its end with its outcome), and <code>dut.step</code> (each keyword call). <span class="st built">built</span></p>
 <h4 id="lab-rack">A lab rack: <code>ktestd -peer</code></h4>
-<p>With <code>-peer dut=https://host:8445,token=dut.token,cacert=dut.pem,contract=dut-interface.json</code>, <code>ktestd</code> drives a DUT rack as an instrument. At start it asks the DUT rack which contract it runs (<code>GET /dut/contract</code>) and refuses to start unless it is this rack's copy, byte for byte, its resource included. While it runs, it holds the DUT's lease, subscribes to the DUT rack's monitors, mode and actions, and samples its clock once a second (<code>GET /clock</code>). It records:</p>
+<p>With <code>-peer dut=https://host:8445,token=dut.token,cacert=dut.pem,contract=dut-interface.json</code>, <code>ktestd</code> drives a DUT rack as an instrument; give <code>-peer</code> once for each DUT rack, each under a name of its own, and the streams below are recorded under each name (<code>a.mon.alive</code>, <code>b.link</code>). At start it asks the DUT rack which contract it runs (<code>GET /dut/contract</code>) and refuses to start unless it is this rack's copy, byte for byte, its resource included. While it runs, it holds the DUT's lease, subscribes to the DUT rack's monitors, mode and actions, and samples its clock once a second (<code>GET /clock</code>). It records:</p>
 <div class="scroll"><table>
 <thead><tr><th>Stream</th><th>Holds</th></tr></thead>
 <tbody>
@@ -687,8 +694,9 @@ $ $K -X POST -H "Ktest-Lease: $T" http://ktest/dut/actions/reset             # r
 <tr><td><code>DUT Snapshot    alive,speed</code></td><td>the monitors' states, as text</td></tr>
 </tbody>
 </table></div>
+<p>Every DUT keyword takes <code>dut=</code>, the DUT rack's name: <code>DUT Set Mode    active    dut=a</code>. With one DUT rack it may be left out; with several it is required, and the names a call gives are checked against that rack's contract.</p>
 <p>A wait fails <code>timeout</code>, <code>refused</code> or <code>link_lost</code>; <code>nok</code> is a value. Every answer the monitors gave a keyword is recorded in <code>dut.judgement</code>, and <code>logbcheck -judgements</code> replays each from the mirrored states. With <code>dutsim</code>, <code>logbcheck -dutsim transcript</code> holds every step result to what the DUT did. <span class="st built">built</span></p>
-<p>The rules are in <code>limits.json</code> (<a href="#limits">§2.5</a>). Measured with <code>examples/two-racks</code>: a killed DUT rack had the stress removed 3.4 ms later, as the link broke; a frozen one, 102 ms later, by its watermark's age; an <code>abort</code> monitor going <code>dev</code>, 0.6 ms after the lab rack received it. <span class="st built">built</span></p>
+<p>The rules are in <code>limits.json</code> (<a href="#limits">§2.5</a>). With several DUT racks the stress is theirs in common, so a rule holds while it holds for any of them, and its cause names the rack; every contract must declare the abort monitor. Measured with <code>examples/two-racks</code>: a killed DUT rack had the stress removed 3.4 ms later, as the link broke; a frozen one, 102 ms later, by its watermark's age; an <code>abort</code> monitor going <code>dev</code>, 0.6 ms after the lab rack received it. <span class="st built">built</span></p>
 <h4><code>sublat</code>: how late the monitors reach a subscriber</h4>
 <pre class="code"><code>sublat [-cacert pem] [-token file] [-d 10s] https://rack:8443/stream/sub?ch=mon.*</code></pre>
 <p>Subscribes to <code>/stream/sub</code> and reports, per monitor transition and per watermark, how long after its own time it arrived: minimum, median, 90th and 99th percentile and maximum.</p>
@@ -1108,6 +1116,25 @@ $ ktestd -https :8443 -tokens tokens -panel rack.json -psu psu1=192.168.1.20:502
 </ul>
 <p>The flags and streams of each side are in <a href="#dut-rack">§1.7, a DUT rack</a> and <a href="#lab-rack">a lab rack</a>. <code>examples/two-racks/demo.sh</code> runs both on one machine with a simulated DUT and supply.</p>
 
+<h3 id="peer-protocol">The peer protocol, for other programs</h3>
+<p>Either rack may be a program other than <code>ktestd</code>: a lab's own test software as the master, or a supplier's DUT software as the secondary. What passes between them is specified in <code>doc/peer-protocol.md</code>, version 1, normatively and in two parts: what a DUT rack must do, and what a master must do. It covers the contract, the expression language, the monitors' states and the watermark, the REST interface, the subscription stream and its record layouts, clock estimation, the protection rules and versioning. <code>ktestd</code> states its version in <code>GET /dut/contract</code> and in its stream's metadata.</p>
+<div class="scroll"><table>
+<thead><tr><th>Go package</th><th>For</th></tr></thead>
+<tbody>
+<tr><td><code>peer</code></td><td>a master: the connection with its contract check, lease and clock (<code>Link</code>), what the DUT rack streamed (<code>View</code>), the DUT operations (<code>DUT</code>) and the protection rules' verdict (<code>Guard</code>). <code>ktestd -peer</code> runs on it</td></tr>
+<tr><td><code>secondary</code></td><td>a DUT rack: <code>Server</code> loads the contract against the program's own streams, evaluates the monitors, records, and serves the REST interface and the subscription; the program writes its records and runs its actions. <code>LoadTokens</code> and <code>SelfSigned</code> do access as <code>ktestd</code> does</td></tr>
+<tr><td><code>contract</code>, <code>expr</code>, <code>monitor</code></td><td>the contract file, the expression language and the evaluator, shared by both sides</td></tr>
+<tr><td><code>conformance</code></td><td>the checks behind <code>peer-conformance</code></td></tr>
+</tbody>
+</table></div>
+<p><code>examples/library-rack</code> is a DUT rack written on <code>secondary</code> in under 300 lines, with the simulated DUT in-process and its actions in Go; the lab rack of <code>examples/two-racks</code> drives it unchanged. A program written so writes each record within the server's reorder window of its time, 20 ms by default; a later one is a gap.</p>
+
+<h3>Several DUT racks</h3>
+<p>Several DUTs in one chamber, or on one supply, each have their own DUT rack, and one lab rack drives them all: <code>-peer</code> once for each, <code>dut=</code> on every DUT keyword, and the protection rules covering every rack. <code>examples/two-duts</code> runs a <code>ktestd</code> DUT rack and a <code>library-rack</code> on one supply: one dip stresses both, each DUT is classified from its own rack, and freezing either rack removes the stress.</p>
+
+<h3>Checking an implementation</h3>
+<p><code>peer-conformance</code> (<a href="#programs">§1.7</a>) checks either side from outside: <code>ktestd -contract</code> passes its 43 checks of a DUT rack, with transitions arriving 2.8 ms after their time at the 99th percentile, and <code>ktestd -peer</code> its 10 checks of a master. Held to the faults it was put through with <code>logbcheck -faults</code>, <code>ktestd</code> as master took its rule 21 ms after an abort, 83 ms after the DUT rack froze and at once when the link was lost, and cleared it within 20 ms of each fault's end. A DUT rack's monitors are held to the reference evaluator with <code>monitor-check -live</code>, on its own recording.</p>
+
 <h2 id="not">3.7 What Ktest is not</h2>
 <ul>
 <li><strong>Not a production end-of-line system.</strong> No operator mode, no yield reporting, no shop-floor integration.</li>
@@ -1132,12 +1159,15 @@ $ ktestd -https :8443 -tokens tokens -panel rack.json -psu psu1=192.168.1.20:502
 <tr><td></td><td>Two racks: the peer driver and the daemon rules</td><td><span class="st built">built</span></td></tr>
 <tr><td></td><td>Two racks: DUT keywords for the master's procedures</td><td><span class="st built">built</span></td></tr>
 <tr><td></td><td>Locked mode</td><td><span class="st built">built</span></td></tr>
+<tr><td></td><td>The peer protocol as a specification; libraries for either side (<code>peer</code>, <code>secondary</code>); the conformance kit</td><td><span class="st built">built</span></td></tr>
+<tr><td></td><td>One lab rack driving several DUT racks</td><td><span class="st built">built</span></td></tr>
+<tr><td></td><td><code>ktestd -contract</code> on <code>secondary.Server</code>; an NDJSON subscription; one DUT rack running several contracts</td><td><span class="st proposed">proposed</span></td></tr>
 <tr><td></td><td>Replay in the rack; packaging as a service; more instrument kinds and dialects by configuration; USBTMC</td><td><span class="st planned">planned</span></td></tr>
 <tr><td></td><td>Several buses; LIN; ISO-TP; J1939</td><td><span class="st planned">planned</span></td></tr>
 <tr><td></td><td>The agent tool server</td><td><span class="st proposed">proposed</span></td></tr>
 </tbody>
 </table></div>
-<p>The design is written down in full, with its measurements and the decisions that were rejected, in <code>doc/test-software-outline.md</code>.</p>
+<p>The design is written down in full, with its measurements and the decisions that were rejected, in <code>doc/test-software-outline.md</code>; the peer protocol between racks in <code>doc/peer-protocol.md</code>.</p>
 </section>
 
     <footer class="end">Ktest user manual · prospective, written against ktestd 0.4 · Truke</footer>

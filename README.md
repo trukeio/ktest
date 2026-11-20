@@ -110,6 +110,8 @@ hardware is needed:
 - [examples/library-rack](examples/library-rack/README.md) is a DUT rack that is
   not ktestd: a program of its own on package `secondary`, driven by the same
   lab rack (doc/peer-protocol.md).
+- [examples/two-duts](examples/two-duts/README.md) has one lab rack drive two DUT
+  racks, a ktestd one and a library-rack, with two DUTs on one supply.
 
 ```sh
 examples/supply-bench/demo.sh
