@@ -80,7 +80,7 @@ const (
 // without a peer, a peer without monitoring_lost, an action other than
 // remove_stress, an instrument this daemon does not have, a monitor the
 // contract lacks.
-func checkRules(r *rules, havePeer bool, insts map[string]bool, id *contract.Identity) error {
+func checkRules(r *rules, havePeer bool, insts map[string]bool, ids []*contract.Identity) error {
 	if r == nil {
 		if havePeer {
 			return errors.New(`-peer needs "rules": {"monitoring_lost": ...} in limits.json: ` +
@@ -106,8 +106,13 @@ func checkRules(r *rules, havePeer bool, insts map[string]bool, id *contract.Ide
 			return fmt.Errorf(`rules: dut_abort's action is %q; the action there is is "remove_stress"`, a.Action)
 		case a.Monitor == "":
 			return errors.New(`rules: dut_abort needs the "monitor" that asks for protection, "abort"`)
-		case !slices.Contains(id.Monitors, a.Monitor):
-			return fmt.Errorf("rules: dut_abort watches monitor %q, which contract %s does not declare", a.Monitor, id.Name)
+		}
+		// The rule is about every DUT rack, so every contract must have the
+		// monitor it watches.
+		for _, id := range ids {
+			if !slices.Contains(id.Monitors, a.Monitor) {
+				return fmt.Errorf("rules: dut_abort watches monitor %q, which contract %s does not declare", a.Monitor, id.Name)
+			}
 		}
 	}
 	for _, n := range r.RemoveStress {
@@ -142,24 +147,39 @@ type linkEvent struct {
 	msg   string
 }
 
-// peerLink is the loop's side of the peer.
+// peerLink is the loop's side of one DUT rack.
 type peerLink struct {
 	c      *peer.Client
 	id     *contract.Identity
-	rules  *rules
-	events chan peer.Event
 	driver *peer.Link
 	guard  peer.Guard
 
-	link, clock, ruleSt, judgeSt *teeStream
-	mirrors                      map[string]*mirror
+	link, clock, judgeSt *teeStream
+	mirrors              map[string]*mirror
 
 	// view is the DUT as the rules and the procedures' keywords see it.
 	view *peer.View
 
 	connected bool
 	lastLink  linkEvent // the last link record, so that a retry failing as the last did is not recorded again
-	holds     map[string]bool
+}
+
+// peerSet is the loop's side of every DUT rack it drives, and of the rules
+// about them. The stress is the lab rack's, one for all of them — a chamber
+// holds every DUT, a supply may power several — so a rule holds while it
+// holds for any rack, and says which.
+type peerSet struct {
+	links  []*peerLink
+	rules  *rules
+	ruleSt *teeStream
+	holds  map[string]bool
+	events chan peerMsg
+}
+
+// peerMsg is what one rack's driver handed over.
+type peerMsg struct {
+	p *peerLink
+	e peer.Event
 }
 
 // mirror is one of the DUT rack's streams as this rack records it.
@@ -331,8 +351,7 @@ func newPeerLink(cfg peer.Config, r *rules, meta map[string]string) (*peerLink, 
 			meta["peer."+p+".provenance."+k] = v
 		}
 	}
-	pl := &peerLink{c: c, id: id, rules: r, events: make(chan peer.Event, 1024), mirrors: map[string]*mirror{},
-		holds: map[string]bool{ruleLost: true}, view: peer.NewView(),
+	pl := &peerLink{c: c, id: id, mirrors: map[string]*mirror{}, view: peer.NewView(),
 		driver: &peer.Link{Client: c, Contract: id}}
 	if r != nil {
 		pl.guard.WatermarkAge = time.Duration(r.MonitoringLost.WatermarkAge)
@@ -343,8 +362,28 @@ func newPeerLink(cfg peer.Config, r *rules, meta map[string]string) (*peerLink, 
 	return pl, nil
 }
 
-// declare lays out the peer's streams and the rules', so that a reader meets
-// them from the start, the link down.
+// newPeerSet gathers the links, with the rules about them; monitoring is
+// lost from the start, until every rack is connected and vouching.
+func newPeerSet(links []*peerLink, r *rules) *peerSet {
+	return &peerSet{links: links, rules: r, holds: map[string]bool{ruleLost: true}, events: make(chan peerMsg, 1024)}
+}
+
+// declare lays out every rack's streams and the rules', so that a reader
+// meets them from the start, the links down.
+func (ps *peerSet) declare(w *tee, t time.Time) error {
+	for _, p := range ps.links {
+		if err := p.declare(w, t); err != nil {
+			return err
+		}
+	}
+	var err error
+	if ps.ruleSt, err = w.NewStream(rulesSchema); err != nil {
+		return err
+	}
+	return ps.writeRule(w, t, 0, 0, "", "")
+}
+
+// declare lays out a rack's own streams.
 func (p *peerLink) declare(w *tee, t time.Time) error {
 	var err error
 	if p.link, err = w.NewStream(func() *logb.Schema { return linkSchema(p.c.Name()) }); err != nil {
@@ -353,16 +392,10 @@ func (p *peerLink) declare(w *tee, t time.Time) error {
 	if p.clock, err = w.NewStream(func() *logb.Schema { return clockSchema(p.c.Name()) }); err != nil {
 		return err
 	}
-	if p.ruleSt, err = w.NewStream(rulesSchema); err != nil {
-		return err
-	}
 	if p.judgeSt, err = w.NewStream(func() *logb.Schema { return judgementSchema(p.c.Name()) }); err != nil {
 		return err
 	}
-	if err := p.writeLink(w, t, linkDown, "not yet connected"); err != nil {
-		return err
-	}
-	return p.writeRule(w, t, 0, 0, "", "")
+	return p.writeLink(w, t, linkDown, "not yet connected")
 }
 
 func (p *peerLink) writeLink(w *tee, t time.Time, ev byte, msg string) error {
@@ -375,14 +408,14 @@ func (p *peerLink) writeLink(w *tee, t time.Time, ev byte, msg string) error {
 	})
 }
 
-func (p *peerLink) writeRule(w *tee, t time.Time, seq uint32, ev byte, rule, msg string) error {
-	return w.Write(t, p.ruleSt, func(rec []byte) {
+func (ps *peerSet) writeRule(w *tee, t time.Time, seq uint32, ev byte, rule, msg string) error {
+	return w.Write(t, ps.ruleSt, func(rec []byte) {
 		putUint32(rec[rlSeq:], seq)
 		rec[rlEvent] = ev
-		if p.holds[ruleLost] {
+		if ps.holds[ruleLost] {
 			rec[rlHolds] |= 1
 		}
-		if p.holds[ruleAbort] {
+		if ps.holds[ruleAbort] {
 			rec[rlHolds] |= 2
 		}
 		putStr(rec, rlRule, 32, rule)
@@ -392,10 +425,10 @@ func (p *peerLink) writeRule(w *tee, t time.Time, seq uint32, ev byte, rule, msg
 
 // run is the driver, connected or trying to be until ctx ends: package
 // peer's Link, handing what happens to the loop.
-func (p *peerLink) run(ctx context.Context) {
+func (p *peerLink) run(ctx context.Context, out chan<- peerMsg) {
 	p.driver.Run(ctx, func(e peer.Event) bool {
 		select {
-		case p.events <- e:
+		case out <- peerMsg{p, e}:
 			return true
 		case <-ctx.Done():
 			return false
@@ -404,8 +437,8 @@ func (p *peerLink) run(ctx context.Context) {
 }
 
 // peerEvent handles what the driver handed over, on the loop.
-func (l *loop) peerEvent(e peer.Event) {
-	p := l.peer
+func (l *loop) peerEvent(m peerMsg) {
+	p, e := m.p, m.e
 	t := time.Now()
 	switch {
 	case e.Link != nil:
@@ -430,15 +463,14 @@ func (l *loop) peerEvent(e peer.Event) {
 			fatalf("write: %v", err)
 		}
 	case e.Item != nil:
-		l.mirror(e.Item)
+		l.mirror(p, e.Item)
 	}
 	l.evalRules(t)
 }
 
 // mirror records one of the DUT rack's records, and takes from it what the
 // rules watch.
-func (l *loop) mirror(it *peer.Item) {
-	p := l.peer
+func (l *loop) mirror(p *peerLink, it *peer.Item) {
 	name := it.Schema.Name
 	m := p.mirrors[name]
 	if m != nil && (m.from.RecordBits != it.Schema.RecordBits || len(m.from.Fields) != len(it.Schema.Fields)) {
@@ -478,19 +510,34 @@ func (l *loop) mirror(it *peer.Item) {
 // stress when one takes hold or when a listed instrument is armed while it
 // holds.
 func (l *loop) evalRules(t time.Time) {
-	p := l.peer
-	if p == nil || p.rules == nil {
+	ps := l.peers
+	if ps == nil || ps.rules == nil {
 		return
 	}
-	v := p.guard.Check(p.view, t)
-	l.rule(t, ruleLost, v.MonitoringLost, v.LostWhy)
-	if p.rules.DutAbort != nil {
-		l.rule(t, ruleAbort, v.DUTAbort, v.AbortWhy)
+	// A rule holds while it holds for any rack; its cause names each one it
+	// holds for, by name when there are several.
+	var lost, abort []string
+	for _, p := range ps.links {
+		v := p.guard.Check(p.view, t)
+		who := ""
+		if len(ps.links) > 1 {
+			who = p.c.Name() + ": "
+		}
+		if v.MonitoringLost {
+			lost = append(lost, who+v.LostWhy)
+		}
+		if v.DUTAbort {
+			abort = append(abort, who+v.AbortWhy)
+		}
+	}
+	l.rule(t, ruleLost, len(lost) > 0, strings.Join(lost, "; "))
+	if ps.rules.DutAbort != nil {
+		l.rule(t, ruleAbort, len(abort) > 0, strings.Join(abort, "; "))
 	}
 }
 
 func (l *loop) rule(t time.Time, name string, holds bool, why string) {
-	p := l.peer
+	p := l.peers
 	was := p.holds[name]
 	p.holds[name] = holds
 	if !holds {
@@ -530,4 +577,26 @@ func (l *loop) rule(t time.Time, name string, holds bool, why string) {
 		outcome = procedure.Fail
 	}
 	l.d.procs.failRun(outcome, name+": "+why)
+}
+
+// peerList is -peer, once for each DUT rack.
+type peerList []string
+
+func (f *peerList) String() string     { return strings.Join(*f, " ") }
+func (f *peerList) Set(v string) error { *f = append(*f, v); return nil }
+
+// contractsHash is what procedure.run records as the DUT contract: the one
+// rack's contract hash, or with several, the sha256 of a line for each,
+// "name sha256", in name order. Each rack's own is in the recording's
+// metadata, under peer.<name>.contract.sha256.
+func contractsHash(links []*peerLink) string {
+	if len(links) == 1 {
+		return links[0].id.Hash
+	}
+	var lines []string
+	for _, p := range links {
+		lines = append(lines, p.c.Name()+" "+p.id.Hash+"\n")
+	}
+	slices.Sort(lines)
+	return contract.Hash([]byte(strings.Join(lines, "")))
 }

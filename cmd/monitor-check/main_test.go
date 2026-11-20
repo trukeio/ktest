@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/trukeio/ktest/dut"
+	"github.com/trukeio/ktest/monitor"
 )
 
 // The fixture is a recording of examples/supply-bench running its ramp
@@ -263,5 +264,29 @@ func TestLiveIsReplay(t *testing.T) {
 	}
 	if fails := compareLive(plain); len(fails) != 1 || !strings.Contains(fails[0], "no mon.* streams") {
 		t.Fatalf("got %v", fails)
+	}
+}
+
+// A gap is noticed after the records it lost: a record stamped before a
+// stall arrives after it. The live evaluator saw less than the recording
+// from the first record lost, so transitions are compared up to there, not
+// up to when the gap was noticed.
+func TestCompareUpToTheFirstLostRecord(t *testing.T) {
+	x := func(t int64, m string, from, to monitor.State) monitor.Transition {
+		return monitor.Transition{T: t, Monitor: m, From: from, To: to}
+	}
+	r := &result{
+		start: 0, haveLive: true, liveWM: 1000,
+		tr:   []monitor.Transition{x(100, "alive", monitor.Unknown, monitor.OK), x(530, "supply", monitor.OK, monitor.Unknown)},
+		live: []monitor.Transition{x(100, "alive", monitor.Unknown, monitor.OK), x(520, "supply", monitor.OK, monitor.Unknown)},
+		// lost records from 500, noticed at 900
+		firstGap: 500,
+	}
+	if fails := compareLive(r); len(fails) != 0 {
+		t.Errorf("a difference after the first lost record was held against the rack: %v", fails)
+	}
+	r.firstGap = 600
+	if fails := compareLive(r); len(fails) == 0 {
+		t.Error("a difference before the first lost record was let through")
 	}
 }

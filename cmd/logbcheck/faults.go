@@ -29,7 +29,9 @@ import (
 // ends, and clear it within -recover of the end. Each rule's taking hold and
 // clearing is in the rules stream. The fault times are put on the master's
 // clock through the offset it recorded in <peer>.clock, so the two need not
-// share a clock.
+// share a clock. A master that drives other DUT racks too names the
+// reference one with -faults-peer; its rules hold for any rack, so the others
+// must stay healthy through the run.
 
 type ruleEvent struct {
 	t     int64 // the master's clock, Unix ns
@@ -42,7 +44,7 @@ type clockEstimate struct {
 	offset, unc int64 // the DUT rack's clock less this one, and its uncertainty
 }
 
-func compareFaults(path, faultsPath string, react, recoverIn time.Duration, verbose bool) (int, []string, error) {
+func compareFaults(path, faultsPath, peerName string, react, recoverIn time.Duration, verbose bool) (int, []string, error) {
 	raw, err := os.ReadFile(faultsPath)
 	if err != nil {
 		return 0, nil, err
@@ -54,7 +56,7 @@ func compareFaults(path, faultsPath string, react, recoverIn time.Duration, verb
 	if len(ff.Faults) == 0 {
 		return 0, nil, fmt.Errorf("%s holds no faults", faultsPath)
 	}
-	rules, clocks, wmAge, err := readRules(path)
+	rules, clocks, wmAge, err := readRules(path, peerName)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -132,7 +134,7 @@ func estimateAt(cs []clockEstimate, t int64) clockEstimate {
 
 // readRules reads the rules stream, every peer's clock estimates, and the
 // watermark age the recording declares.
-func readRules(path string) ([]ruleEvent, []clockEstimate, time.Duration, error) {
+func readRules(path, peerName string) ([]ruleEvent, []clockEstimate, time.Duration, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, nil, 0, err
@@ -170,7 +172,11 @@ func readRules(path string) ([]ruleEvent, []clockEstimate, time.Duration, error)
 			continue
 		}
 		if isClock {
-			peers[strings.TrimSuffix(name, ".clock")] = true
+			pn := strings.TrimSuffix(name, ".clock")
+			peers[pn] = true
+			if peerName != "" && pn != peerName {
+				continue
+			}
 		}
 		for i := 0; i < int(b.Count); i++ {
 			ax, err := b.Axis(i)
@@ -194,8 +200,11 @@ func readRules(path string) ([]ruleEvent, []clockEstimate, time.Duration, error)
 			rules = append(rules, ruleEvent{t, ev, rule})
 		}
 	}
-	if len(peers) > 1 {
-		return nil, nil, 0, fmt.Errorf("the recording has %d peers; the faults are one reference rack's", len(peers))
+	switch {
+	case peerName != "" && !peers[peerName]:
+		return nil, nil, 0, fmt.Errorf("the recording has no DUT rack named %s", peerName)
+	case peerName == "" && len(peers) > 1:
+		return nil, nil, 0, fmt.Errorf("the recording has %d DUT racks; name the reference rack with -faults-peer", len(peers))
 	}
 	sort.SliceStable(rules, func(i, j int) bool { return rules[i].t < rules[j].t })
 	sort.SliceStable(clocks, func(i, j int) bool { return clocks[i].t < clocks[j].t })

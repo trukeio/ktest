@@ -1,0 +1,11 @@
+# Made by demo.sh, and never committed.
+bin/
+*.logb
+*.logbview
+*.txt
+tokens
+token
+*.token
+*.pem
+state/
+lab-contract/

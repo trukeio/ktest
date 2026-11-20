@@ -94,8 +94,8 @@ func main() {
 			fmt.Fprintf(os.Stderr, "monitor-check: the %d transitions the rack recorded up to its last watermark, %+.6fs, "+
 				"are the replay's, to the nanosecond\n", n, res.rel(upto))
 			if res.firstGap != math.MaxInt64 {
-				fmt.Fprintf(os.Stderr, "monitor-check: the rack recorded a gap at %+.6fs; transitions after it were not compared\n",
-					res.rel(res.firstGap))
+				fmt.Fprintf(os.Stderr, "monitor-check: the rack lost records from %+.6fs, in a gap; transitions from there on "+
+					"were not compared\n", res.rel(res.firstGap))
 			}
 		}
 	}
@@ -128,9 +128,14 @@ type result struct {
 
 	// What the rack recorded live, when the recording has it: the monitors'
 	// transitions, the last watermark, and the first gap.
-	live     []monitor.Transition
-	liveWM   int64 // 0 without one
-	firstGap int64 // math.MaxInt64 without one
+	live   []monitor.Transition
+	liveWM int64 // 0 without one
+	// firstGap is the first record any gap lost, by its own time: from there
+	// on the live evaluator saw less than the recording holds, and its
+	// transitions may differ from the replay's. A gap is noticed later than
+	// that — a record stamped before a stall arrives after it — so its own
+	// time is too late a place to stop comparing. math.MaxInt64 without one.
+	firstGap int64
 	haveLive bool
 }
 
@@ -178,7 +183,19 @@ func check(contractPath, recPath, modeChannel string) (*result, error) {
 	var samples []sample
 	var gaps []string
 	var gapT []int64
-	err = scan(recPath, nil, func(b *logb.Batch) error {
+	// The gap's own fields are Unix nanoseconds; this works from the
+	// recording's epoch, which its metadata states.
+	var rd *logb.Reader
+	epoch := func() int64 {
+		for _, kv := range rd.Meta {
+			if kv.Key == "recording.epoch" {
+				e, _ := strconv.ParseInt(kv.Value, 10, 64)
+				return e
+			}
+		}
+		return 0
+	}
+	err = scan(recPath, func(r *logb.Reader) { rd = r }, func(b *logb.Batch) error {
 		for i := 0; i < int(b.Count); i++ {
 			// Every record moves the recording's span; only the inputs' and
 			// the mode's are kept.
@@ -202,7 +219,17 @@ func check(contractPath, recPath, modeChannel string) (*result, error) {
 				res.liveWM = max(res.liveWM, t)
 				continue
 			case name == "mon.gap":
-				res.firstGap = min(res.firstGap, t)
+				from := t
+				if f := fieldIndexOf(b.Schema, "from"); f >= 0 {
+					if v, err := b.Value(i, f); err == nil {
+						if ns, ok := v.(int64); ok && ns > 0 {
+							if e := epoch(); e > 0 {
+								from = min(from, ns-e)
+							}
+						}
+					}
+				}
+				res.firstGap = min(res.firstGap, from)
 				rec, err := b.Record(i)
 				if err != nil {
 					return err
@@ -506,4 +533,13 @@ func cut(s string) string {
 		return rest
 	}
 	return s
+}
+
+func fieldIndexOf(s *logb.Schema, name string) int {
+	for i := range s.Fields {
+		if s.Fields[i].Name == name {
+			return i
+		}
+	}
+	return -1
 }

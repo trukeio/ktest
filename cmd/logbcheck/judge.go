@@ -22,8 +22,13 @@ import (
 //
 // A class (Classify Recovery) follows from its judgements by fixed rules, so
 // judgements that replay are verdicts that replay.
+//
+// A master driving several DUT racks records each one's judgements and
+// mirrored monitors under its name, and each judgement is replayed from its
+// own rack's states.
 
 type judged struct {
+	peer     string // the DUT rack it was about, the streams' prefix
 	t        float64
 	kind     uint64
 	from, to int64
@@ -75,7 +80,8 @@ func readJudged(path string) ([]judged, map[string][]mstamp, error) {
 				to, _ := val("to").(int64)
 				ms, _ := val("monitors").(string)
 				res, _ := val("result").(string)
-				js = append(js, judged{t: ax.Seconds(b.Schema.AxisExp), kind: kind, from: from, to: to,
+				js = append(js, judged{peer: strings.TrimSuffix(name, ".judgement"), t: ax.Seconds(b.Schema.AxisExp),
+					kind: kind, from: from, to: to,
 					monitors: strings.Split(ms, ","), result: res})
 			}
 		case strings.Contains(name, ".mon.") && b.Schema.Meta["mirror.of"] != "":
@@ -83,6 +89,7 @@ func readJudged(path string) ([]judged, map[string][]mstamp, error) {
 			if m == "watermark" || m == "gap" {
 				continue
 			}
+			m = histKey(strings.TrimSuffix(name, "."+b.Schema.Meta["mirror.of"]), m)
 			idx, err := fieldIndex(b.Schema, "peer_t", "state")
 			if err != nil {
 				return nil, nil, err
@@ -125,8 +132,20 @@ func stateAt(h []mstamp, t int64) string {
 	return s
 }
 
-// replay recomputes one judgement.
-func replay(j judged, hist map[string][]mstamp) string {
+// histKey is where a rack's monitor's states are kept.
+func histKey(peer, monitor string) string {
+	if peer == "" {
+		return monitor
+	}
+	return peer + "\x00" + monitor
+}
+
+// replay recomputes one judgement, from its own rack's states.
+func replay(j judged, all map[string][]mstamp) string {
+	hist := map[string][]mstamp{}
+	for _, m := range j.monitors {
+		hist[m] = all[histKey(j.peer, m)]
+	}
 	if j.kind == 2 {
 		for _, m := range j.monitors {
 			if stateAt(hist[m], j.to) != "ok" {
@@ -175,8 +194,8 @@ func compareJudged(path string, verbose bool) (int, error) {
 			if j.kind == 2 {
 				what = "whether all were ok"
 			}
-			bad = append(bad, fmt.Sprintf("at %.3fs, %s (%s): the keyword was told %q, and the mirrored states say %q",
-				j.t, what, strings.Join(j.monitors, ","), j.result, got))
+			bad = append(bad, fmt.Sprintf("at %.3fs, %s, %s (%s): the keyword was told %q, and the mirrored states say %q",
+				j.t, j.peer, what, strings.Join(j.monitors, ","), j.result, got))
 		}
 	}
 	if len(bad) > 0 {

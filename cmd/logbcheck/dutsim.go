@@ -30,6 +30,10 @@ import (
 //   - ok and nok, as Threshold Search records levels: no dip, and a dip;
 //   - lost, a dip it did not come back from, reset or not.
 //
+// A lab rack testing several DUTs records each one's results at points of
+// its own, and each is held to its own transcript with -dutsim
+// point=transcript.
+//
 // The lab rack's clock and dutsim's are the same machine's, as in
 // examples/two-racks; a recording made against a DUT on another machine
 // needs the clocks' offset first.
@@ -152,10 +156,18 @@ func expected(evs []dutEvent) (class string, dipped bool) {
 }
 
 // compareDutsim holds the recording's verdicts to the transcript.
-func compareDutsim(recPath, trPath string, verbose bool) (int, error) {
-	vs, err := readVerdicts(recPath)
+func compareDutsim(recPath, trPath, point string, verbose bool) (int, error) {
+	all, err := readVerdicts(recPath)
 	if err != nil {
 		return 0, err
+	}
+	// With several DUTs, each one's results are recorded at points of its
+	// own, and are held to its own transcript, each since its own before.
+	var vs []verdict
+	for _, v := range all {
+		if point == "" || v.point == point {
+			vs = append(vs, v)
+		}
 	}
 	evs, err := readDutsim(trPath)
 	if err != nil {

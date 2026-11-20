@@ -29,8 +29,15 @@ func TestCheckRules(t *testing.T) {
 	}
 	good := `{"monitoring_lost": {"watermark_age": "100ms", "action": "remove_stress"},
 	          "dut_abort": {"monitor": "abort", "action": "remove_stress"}, "remove_stress": ["psu1"]}`
-	if err := checkRules(parse(good), true, insts, id); err != nil {
+	ids := []*contract.Identity{id}
+	if err := checkRules(parse(good), true, insts, ids); err != nil {
 		t.Fatalf("good rules refused: %v", err)
+	}
+	// With several racks, the abort monitor must be in every contract.
+	other := &contract.Identity{Name: "d", Monitors: []string{"alive"}}
+	if err := checkRules(parse(good), true, insts, []*contract.Identity{id, other}); err == nil ||
+		!strings.Contains(err.Error(), "contract d does not declare") {
+		t.Fatalf("an abort monitor one of two contracts lacks: %v", err)
 	}
 	if err := checkRules(nil, false, insts, nil); err != nil {
 		t.Fatalf("no rules and no peer: %v", err)
@@ -56,7 +63,7 @@ func TestCheckRules(t *testing.T) {
 			if c.js != "" {
 				r = parse(c.js)
 			}
-			err := checkRules(r, c.peer, insts, id)
+			err := checkRules(r, c.peer, insts, ids)
 			if err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Fatalf("got %v, want a refusal naming %s", err, c.want)
 			}

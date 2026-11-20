@@ -280,17 +280,18 @@ func main() {
 		scopeTrdl = flag.Bool("scope-trigger-delay", false, "take TRDL into a scope's time axis, as third-party readers do "+
 			"and the programming guides do not")
 		contractPath = flag.String("contract", "", "a DUT contract, dut-interface.json: run its monitors live, as a DUT rack")
-		peerFlag     = flag.String("peer", "", "a DUT rack to drive, as a master: "+
-			"name=https://host:port,token=file,cacert=file,contract=dut-interface.json")
-		monWindow = flag.Duration("mon-window", 2*time.Millisecond, "-contract: how long a record is held for "+
+		monWindow    = flag.Duration("mon-window", 2*time.Millisecond, "-contract: how long a record is held for "+
 			"earlier ones from other clocks to arrive; one later than this is a gap")
 		monTick   = flag.Duration("mon-tick", time.Millisecond, "-contract: how often the loop gives the monitors its clock")
 		watermark = flag.Duration("watermark", 10*time.Millisecond, "-contract: how often mon.watermark is recorded")
 		monQueue  = flag.Int("mon-queue", 8192, "-contract: how many records may wait for the monitors before they are lost, as a gap")
+		peerFlags peerList
 		supplies  supplyFlags
 		scopes    scopeFlags
 	)
 	flag.Var(&supplies, "psu", "a bench supply to drive, SCPI over TCP: name=host:port[,channels]; repeatable")
+	flag.Var(&peerFlags, "peer", "a DUT rack to drive, as a master: "+
+		"name=https://host:port,token=file,cacert=file,contract=dut-interface.json; once for each rack")
 	flag.Var(&scopes, "scope", "an oscilloscope to drive, SCPI over TCP: name=host:port[,channels][,full=ch1+ch2];\n"+
 		"\tfull names the channels whose every sample goes into the recording, and every channel gets the envelope; repeatable")
 	flag.Usage = usage
@@ -450,7 +451,7 @@ func main() {
 
 	// A peer is checked before anything is written too: it must answer, with
 	// this rack's contract, and the rules about it must make sense.
-	var pl *peerLink
+	var ps *peerSet
 	{
 		insts := map[string]bool{iface: true}
 		for _, s := range supplies {
@@ -459,23 +460,40 @@ func main() {
 		for _, s := range scopes {
 			insts[s.name] = true
 		}
-		var id *contract.Identity
-		var pcfg peer.Config
-		if *peerFlag != "" {
-			if pcfg, err = peer.ParseConfig(*peerFlag); err != nil {
+		var ids []*contract.Identity
+		var pcfgs []peer.Config
+		for _, f := range peerFlags {
+			pcfg, err := peer.ParseConfig(f)
+			if err != nil {
 				fatalf("-peer: %v", err)
 			}
-			if id, err = contract.Identify(pcfg.Contract); err != nil {
-				fatalf("-peer: %v", err)
+			for _, o := range pcfgs {
+				if o.Name == pcfg.Name {
+					fatalf("-peer: two DUT racks are named %s; their streams are named under it", pcfg.Name)
+				}
 			}
+			if insts[pcfg.Name] {
+				fatalf("-peer: %s is also an instrument of this rack; name the DUT rack otherwise", pcfg.Name)
+			}
+			id, err := contract.Identify(pcfg.Contract)
+			if err != nil {
+				fatalf("-peer %s: %v", pcfg.Name, err)
+			}
+			pcfgs, ids = append(pcfgs, pcfg), append(ids, id)
 		}
-		if err := checkRules(lim.Rules, *peerFlag != "", insts, id); err != nil {
+		if err := checkRules(lim.Rules, len(pcfgs) > 0, insts, ids); err != nil {
 			fatalf("limits: %v", err)
 		}
-		if *peerFlag != "" {
-			if pl, err = newPeerLink(pcfg, lim.Rules, cfg.Meta); err != nil {
-				fatalf("-peer: %v", err)
+		if len(pcfgs) > 0 {
+			var links []*peerLink
+			for _, pcfg := range pcfgs {
+				pl, err := newPeerLink(pcfg, lim.Rules, cfg.Meta)
+				if err != nil {
+					fatalf("-peer %s: %v", pcfg.Name, err)
+				}
+				links = append(links, pl)
 			}
+			ps = newPeerSet(links, lim.Rules)
 			r := lim.Rules
 			cfg.Meta["rules.monitoring_lost.watermark_age"] = time.Duration(r.MonitoringLost.WatermarkAge).String()
 			cfg.Meta["rules.dut_abort.monitor"] = "none"
@@ -883,36 +901,43 @@ func main() {
 		fmt.Fprintf(os.Stderr, "ktestd: contract %s (sha256 %.12s…), %d monitors live, window %v, watermark every %v\n",
 			dm.c.Name, dm.c.Hash, len(dm.c.Order), *monWindow, *watermark)
 	}
-	var peerEvents <-chan peer.Event
-	if pl != nil {
-		if err := pl.declare(w, time.Now()); err != nil {
+	var peerEvents <-chan peerMsg
+	if ps != nil {
+		if err := ps.declare(w, time.Now()); err != nil {
 			fatalf("%v", err)
 		}
-		l.peer = pl
-		peerEvents = pl.events
-		d.procs.contract = pl.id.Hash
-		// The master's DUT keywords, checked against the contract's names
-		// when a procedure loads.
-		lib.AddDUT(d.procs.lib, &rackAdapter{p: d.procs}, &dutPeer{&peer.DUT{View: pl.view, Client: pl.c,
-			Contract: pl.id, Lease: pl.driver.Lease,
-			OnJudgement: func(j peer.Judgement) {
-				t := time.Now()
-				d.dutJob(func(l *loop) {
-					if err := pl.writeJudgement(l.w, t, j); err != nil {
-						fatalf("write: %v", err)
-					}
-				})
-			}}})
+		l.peers = ps
+		peerEvents = ps.events
+		d.procs.contract = contractsHash(ps.links)
+		// The master's DUT keywords, checked against each rack's contract
+		// when a procedure loads. With one rack, dut= may be left out.
+		duts := map[string]lib.Peer{}
 		pctx, pstop := context.WithCancel(context.Background())
 		defer pstop()
-		go pl.run(pctx)
+		for _, pl := range ps.links {
+			name := pl.c.Name()
+			if len(ps.links) == 1 {
+				name = ""
+			}
+			duts[name] = &dutPeer{&peer.DUT{View: pl.view, Client: pl.c, Contract: pl.id, Lease: pl.driver.Lease,
+				OnJudgement: func(j peer.Judgement) {
+					t := time.Now()
+					d.dutJob(func(l *loop) {
+						if err := pl.writeJudgement(l.w, t, j); err != nil {
+							fatalf("write: %v", err)
+						}
+					})
+				}}}
+			go pl.run(pctx, ps.events)
+			fmt.Fprintf(os.Stderr, "ktestd: peer %s, contract %s (sha256 %.12s…)\n", pl.c.Name(), pl.id.Name, pl.id.Hash)
+		}
+		lib.AddDUTs(d.procs.lib, &rackAdapter{p: d.procs}, duts)
 		also := ""
 		if a := lim.Rules.DutAbort; a != nil {
-			also = fmt.Sprintf(", or monitor %s is dev", a.Monitor)
+			also = fmt.Sprintf(", or its monitor %s is dev", a.Monitor)
 		}
-		fmt.Fprintf(os.Stderr, "ktestd: peer %s, contract %s; stress removed from %s when its watermark is older than %v%s\n",
-			pl.c.Name(), pl.id.Name, strings.Join(lim.Rules.RemoveStress, ", "),
-			time.Duration(lim.Rules.MonitoringLost.WatermarkAge), also)
+		fmt.Fprintf(os.Stderr, "ktestd: stress removed from %s when a DUT rack's watermark is older than %v%s\n",
+			strings.Join(lim.Rules.RemoveStress, ", "), time.Duration(lim.Rules.MonitoringLost.WatermarkAge), also)
 	}
 	// Every instrument's control stream is declared now, with its kind, so a
 	// rack that has only just connected knows a scope from a supply before
@@ -1338,9 +1363,9 @@ type loop struct {
 	queue []pending // sent and not yet handed back, oldest first
 	tasks map[uint32]*task
 
-	mon        *dutMon   // -contract: the live monitors; nil without
-	peer       *peerLink // -peer: the DUT rack; nil without
-	peerEvents <-chan peer.Event
+	mon        *dutMon  // -contract: the live monitors; nil without
+	peers      *peerSet // -peer: the DUT racks; nil without
+	peerEvents <-chan peerMsg
 }
 
 // run is the loop. It returns how many sent frames were never handed back.
@@ -1355,7 +1380,7 @@ func (l *loop) run(rx, echo <-chan can.Frame, done <-chan struct{}, fail <-chan 
 	// The rules about a peer are evaluated on its every record and on this
 	// tick, which is what notices a watermark that has stopped arriving.
 	var ruleTick <-chan time.Time
-	if l.peer != nil {
+	if l.peers != nil {
 		rt := time.NewTicker(10 * time.Millisecond)
 		defer rt.Stop()
 		ruleTick = rt.C

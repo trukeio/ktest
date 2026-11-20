@@ -278,3 +278,61 @@ T
 		t.Errorf("%s: %s", res.Outcome, res.Msg)
 	}
 }
+
+// otherPeer is a second DUT rack, whose contract has a monitor of its own.
+type otherPeer struct{ *peer }
+
+func (p otherPeer) Monitor(n string) error {
+	if n == "heart" {
+		return nil
+	}
+	return p.peer.Monitor(n)
+}
+
+// A master driving two DUT racks: every DUT keyword names one with dut=,
+// which a procedure for one rack need not; names are checked against that
+// rack's contract; and each call reaches the rack it names.
+func TestSeveralDUTs(t *testing.T) {
+	a, b := &peer{}, &peer{}
+	load := func(peers map[string]lib.Peer, body string) (*procedure.Suite, *rack, error) {
+		r := newRack()
+		l := lib.New(r)
+		lib.AddDUTs(l, r, peers)
+		s, err := procedure.Load(write(t, "p.robot", "*** Test Cases ***\nT\n    ${t}=    Mark Time\n"+body),
+			procedure.Env{Lib: l, Channels: r})
+		return s, r, err
+	}
+	two := map[string]lib.Peer{"a": a, "b": otherPeer{b}}
+	for _, c := range []struct{ name, line, want string }{
+		{"no dut= with two racks", "    DUT Set Mode    active\n", "dut= is required: this rack drives a, b"},
+		{"a rack it does not drive", "    DUT Invoke    reset    dut=c\n", "dut=c: this rack drives a, b"},
+		{"a monitor of the other rack's contract", "    ${r}=    DUT Evaluate    heart    dut=a\n", `no monitor "heart"`},
+		{"a search on no rack", "    ${x}=    Threshold Search    p    alive    target=psu1.ch1    nominal=13V    start=9V    step=1V    floor=3V\n", "dut= is required"},
+	} {
+		if _, _, err := load(two, c.line); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: %v, want %q", c.name, err, c.want)
+		}
+	}
+	if _, _, err := load(map[string]lib.Peer{"": a}, "    DUT Invoke    reset    dut=a\n"); err == nil ||
+		!strings.Contains(err.Error(), "needs no name") {
+		t.Errorf("a name for the one rack: %v", err)
+	}
+
+	s, r, err := load(two, `    DUT Set Mode    active    dut=a
+    DUT Invoke    reset    dut=b
+    ${r}=    DUT Evaluate    heart    dut=b
+    ${c}=    Classify Recovery    alive    since=${t}    dut=a
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res := run(t, s, r, "T"); res.Outcome != procedure.OK {
+		t.Fatalf("%s: %s", res.Outcome, res.Msg)
+	}
+	if got := strings.Join(a.calls, "; "); got != "mode active; deviations alive" {
+		t.Errorf("rack a was asked: %s", got)
+	}
+	if got := strings.Join(b.calls, "; "); got != "invoke reset; deviations heart" {
+		t.Errorf("rack b was asked: %s", got)
+	}
+}

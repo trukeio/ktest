@@ -104,7 +104,7 @@ func TestFaults(t *testing.T) {
 		{"held from before", []ruleEvent{{at(500), 1, "dut_abort"}, good[1], good[2], good[3]}, "already held"},
 	} {
 		p := faultRecording(t, t0, c.rules)
-		n, _, err := compareFaults(p, fp, 250*time.Millisecond, 5*time.Second, true)
+		n, _, err := compareFaults(p, fp, "", 250*time.Millisecond, 5*time.Second, true)
 		switch {
 		case c.want == "" && (err != nil || n != 2):
 			t.Errorf("%s: %d, %v", c.name, n, err)

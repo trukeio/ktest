@@ -12,7 +12,7 @@ func mustUnit(s string) expr.Unit { return expr.ParseUnit(s) }
 
 // addThresholdSearch adds Threshold Search: the stress level at which the DUT
 // stops coping, found by stepping a supply dip down until a monitor deviates.
-func addThresholdSearch(l *procedure.Library, r Rack, p Peer, checkMonitors func(string) func(map[string]procedure.Static) error) {
+func addThresholdSearch(l *procedure.Library, r Rack, d *duts, dut procedure.Param) {
 	volts := func(name string) procedure.Param { return procedure.Quantity(name, "V") }
 	target := procedure.Checked(procedure.Text("target"), r.Stressor)
 	l.Add(&procedure.Keyword{
@@ -28,20 +28,15 @@ func addThresholdSearch(l *procedure.Library, r Rack, p Peer, checkMonitors func
 			volts("nominal"), volts("start"), volts("step"), volts("floor"),
 			procedure.Opt(procedure.Duration("duration"), "300ms"),
 			procedure.Opt(procedure.Duration("recover"), "2s"),
-			procedure.Opt(procedure.Checked(procedure.Text("action"), func(s string) error {
-				if s == "" || s == "None" {
-					return nil
-				}
-				return p.Action(s)
-			}), "${None}"),
+			procedure.Opt(procedure.Text("action"), "${None}"),
 			procedure.Opt(procedure.Checked(procedure.Text("method"), func(s string) error {
 				if s != "descending" {
 					return fmt.Errorf("%q is not a method this keyword has; it has descending", s)
 				}
 				return nil
-			}), "descending")},
+			}), "descending"), dut},
 		CheckArgs: func(a map[string]procedure.Static) error {
-			if err := checkMonitors("monitors")(a); err != nil {
+			if err := d.check("monitors:monitors", "action:action")(a); err != nil {
 				return err
 			}
 			num := func(n string) (float64, bool) {
@@ -74,6 +69,10 @@ func addThresholdSearch(l *procedure.Library, r Rack, p Peer, checkMonitors func
 			action := a["action"].Str
 			if a["action"].Kind == procedure.VNone {
 				action = ""
+			}
+			p, err := d.pick(a)
+			if err != nil {
+				return procedure.Value{}, err
 			}
 			recov, dur := seconds(a["recover"]), seconds(a["duration"])
 			var passed *float64

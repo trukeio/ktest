@@ -122,12 +122,15 @@ func main() {
 		ctl     = flag.Bool("control", false, "also check the control streams against the limits the recording declares")
 		psuT    = flag.String("psu", "", "also check a supply against the transcript of what it was told: name=transcript.log")
 		scopeT  = flag.String("scope", "", "also check a scope against the simulator's own account of the run: name=transcript.log")
-		dutT    = flag.String("dutsim", "", "also check the procedure's step results against dutsim's transcript of what the DUT did")
 		judge   = flag.Bool("judgements", false, "also replay every judgement of the DUT's monitors from the mirrored states")
 		faultsF = flag.String("faults", "", "also hold a master's protection rules to the faults peer-conformance master wrote (faults.json)")
 		react   = flag.Duration("react", 250*time.Millisecond, "-faults: how soon after a fault begins its rule must hold (a frozen rack adds the watermark age)")
 		recov   = flag.Duration("recover", 5*time.Second, "-faults: how soon after a fault ends its rule must clear")
+		fPeer   = flag.String("faults-peer", "", "-faults: the reference rack's name, when the master drives several")
 	)
+	var dutT dutsimFlags
+	flag.Var(&dutT, "dutsim", "also check the procedure's step results against dutsim's transcript of what the DUT did: "+
+		"transcript, or point=transcript for the results recorded at that point, once for each DUT")
 	flag.Usage = usage
 	flag.Parse()
 
@@ -225,7 +228,7 @@ func main() {
 			"each to what the keyword was told\n", n)
 	}
 	if *faultsF != "" {
-		n, lines, err := compareFaults(flag.Arg(0), *faultsF, *react, *recov, *verbose)
+		n, lines, err := compareFaults(flag.Arg(0), *faultsF, *fPeer, *react, *recov, *verbose)
 		if err != nil {
 			fail(err)
 		}
@@ -235,13 +238,21 @@ func main() {
 			fmt.Printf("  %s\n", l)
 		}
 	}
-	if *dutT != "" {
-		n, err := compareDutsim(flag.Arg(0), *dutT, *verbose)
+	for _, d := range dutT {
+		point, path, ok := strings.Cut(d, "=")
+		if !ok {
+			point, path = "", d
+		}
+		n, err := compareDutsim(flag.Arg(0), path, point, *verbose)
 		if err != nil {
 			fail(err)
 		}
-		fmt.Printf("logbcheck: %d step results the procedure recorded are what %s says the DUT did: "+
-			"each class, and each level passed or not\n", n, *dutT)
+		at := ""
+		if point != "" {
+			at = " at " + point
+		}
+		fmt.Printf("logbcheck: %d step results the procedure recorded%s are what %s says the DUT did: "+
+			"each class, and each level passed or not\n", n, at, path)
 	}
 }
 
@@ -1632,3 +1643,9 @@ Flags:
 	flag.PrintDefaults()
 	os.Exit(2)
 }
+
+// dutsimFlags is -dutsim, once for each DUT.
+type dutsimFlags []string
+
+func (f *dutsimFlags) String() string     { return strings.Join(*f, " ") }
+func (f *dutsimFlags) Set(v string) error { *f = append(*f, v); return nil }
