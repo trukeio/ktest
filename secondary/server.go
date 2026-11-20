@@ -19,10 +19,9 @@
 // (§10.1): a lapsed lease or a lost link stops nothing here; only a disarm,
 // which the Server passes on as OnDisarm, does.
 //
-// ktestd's -contract is the other secondary in this repository. It shares
-// this package's layouts and subscription filter, and the monitor package,
-// and keeps its own event loop, which it shares with its bus and
-// instruments.
+// The behaviour of a DUT rack is Core's; Server is Core with a control plane,
+// a recording and an HTTP interface of its own. ktestd -contract is Core with
+// ktestd's control plane, the one its bus and instruments share.
 package secondary
 
 import (
@@ -36,8 +35,6 @@ import (
 	"io"
 	"maps"
 	"net/http"
-	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -49,7 +46,6 @@ import (
 	"github.com/trukeio/ktest/channel"
 	"github.com/trukeio/ktest/internal/faultinject"
 	"github.com/trukeio/ktest/monitor"
-	"github.com/trukeio/ktest/peer"
 	"github.com/trukeio/ktest/record"
 	"github.com/trukeio/ktest/stream"
 )
@@ -153,16 +149,12 @@ type ActionFunc func(ctx context.Context, action string) error
 
 func (f ActionFunc) Run(ctx context.Context, action string) error { return f(ctx, action) }
 
-// Server is a DUT rack.
+// Server is a DUT rack: a Core, with a control plane, a recording and an
+// HTTP interface of its own.
 type Server struct {
 	cfg      Config
-	c        *monitor.Contract
+	core     *Core
 	provence map[string]string
-
-	online *monitor.Online
-	tap    *monitor.Tap
-	monIn  <-chan monitor.Item
-	out    chan monitor.Output
 
 	hub *stream.Hub
 
@@ -179,20 +171,12 @@ type Server struct {
 	mu      sync.Mutex
 	sub     *record.Writer
 	streams map[string]*Stream
-	mons    map[string]*Stream
-	wm, gap *Stream
-	mode    *Stream
-	actions map[string]*Stream
-	lastWM  int64
 	err     error // the first error writing the recording
 	closed  bool
 
-	seq                uint32
-	lease              *lease
-	armed              bool
-	requested, applied string
-	run                *actionRun
-	runs               uint32
+	seq   uint32
+	lease *lease
+	armed bool
 }
 
 type lease struct {
@@ -200,16 +184,6 @@ type lease struct {
 	holder  string
 	ttl     time.Duration
 	expires time.Time
-}
-
-type actionRun struct {
-	n       uint32
-	action  string
-	mode    *string
-	seq     uint32
-	by      string
-	cancel  context.CancelFunc
-	stopped string // why it was stopped, set under the lock before cancel
 }
 
 // fileOp is one thing for the recording's goroutine to write.
@@ -274,43 +248,23 @@ func New(cfg Config) (*Server, error) {
 		}
 		table.Stream(sc)
 	}
-	c, err := monitor.Load(cfg.Contract, table, cfg.Check)
+	s := &Server{cfg: cfg, hub: stream.New(), streams: map[string]*Stream{}}
+	core, err := NewCore(CoreConfig{Contract: cfg.Contract, Channels: table, Check: cfg.Check, Actions: cfg.Actions,
+		Source: cfg.Source, Window: cfg.Window, WatermarkEvery: cfg.WatermarkEvery, Queue: cfg.Queue,
+		ActionTimeout: cfg.ActionTimeout, Do: s.do, Now: cfg.Now})
 	if err != nil {
 		return nil, err
 	}
-	if len(c.Actions) > 0 && cfg.Actions == nil {
-		return nil, fmt.Errorf("secondary: contract %s declares actions, and Actions is nil", c.Name)
-	}
-	online, err := monitor.NewOnline(c, cfg.Window, cfg.WatermarkEvery)
-	if err != nil {
-		return nil, err
-	}
-	s := &Server{cfg: cfg, c: c, online: online, out: make(chan monitor.Output, 64), hub: stream.New(),
-		streams: map[string]*Stream{}, mons: map[string]*Stream{}, actions: map[string]*Stream{}}
-	s.tap, s.monIn = monitor.NewTap(online, cfg.Queue)
+	s.core = core
 
-	meta := map[string]string{}
-	maps.Copy(meta, cfg.Meta)
-	meta["peer.protocol"] = strconv.Itoa(peer.Protocol)
-	meta["dut.contract"] = c.Name
-	meta["dut.contract.sha256"] = c.Hash
-	meta["dut.monitors.window"] = cfg.Window.String()
-	meta["dut.monitors.watermark"] = cfg.WatermarkEvery.String()
-	meta["dut.monitors.queue"] = strconv.Itoa(cfg.Queue)
-	attach := map[string][]byte{}
-	raw, err := os.ReadFile(cfg.Contract)
+	meta := maps.Clone(cfg.Meta)
+	if meta == nil {
+		meta = map[string]string{}
+	}
+	maps.Copy(meta, core.Meta())
+	attach, err := core.Attach()
 	if err != nil {
 		return nil, err
-	}
-	attach["dut-interface.json"] = raw
-	if c.Resource != "" {
-		rb, err := os.ReadFile(c.ResourcePath())
-		if err != nil {
-			return nil, err
-		}
-		meta["dut.resource"] = c.Resource
-		meta["dut.resource.sha256"] = c.ResourceHash
-		attach[filepath.Base(c.Resource)] = rb
 	}
 	s.provence = maps.Clone(cfg.Meta)
 	if s.provence == nil {
@@ -329,9 +283,12 @@ func New(cfg Config) (*Server, error) {
 	}
 	s.provence["recording.epoch"] = strconv.FormatInt(s.file.Epoch().UnixNano(), 10)
 
-	// Everything is declared before the first record, so that a reader meets
-	// every stream from the start: the host's, the monitors', the mode and
-	// the actions, and the DUT's control stream.
+	// Everything is declared before the first record is written, so that a
+	// reader meets every stream from the start: the host's, the core's, and
+	// the DUT's control stream. The records the core states its streams with
+	// wait in the recording's queue until its goroutine starts, after the
+	// last declaration: a writer is used by one goroutine at a time.
+	s.fileOps, s.fileDone = make(chan fileOp, 1<<14), make(chan struct{})
 	for _, sc := range cfg.Streams {
 		sc := sc
 		st, err := s.newStream(func() *logb.Schema { return cloneSchema(sc) })
@@ -340,43 +297,37 @@ func New(cfg Config) (*Server, error) {
 		}
 		s.streams[sc.Name] = st
 	}
-	for _, name := range c.Order {
-		if s.mons[name], err = s.newStream(func() *logb.Schema { return MonSchema(c, name, cfg.Source) }); err != nil {
-			return nil, err
-		}
-	}
-	if s.wm, err = s.newStream(func() *logb.Schema { return WatermarkSchema(cfg.Source) }); err != nil {
+	if err := core.Declare(serverWriter{s}, cfg.Now()); err != nil {
 		return nil, err
-	}
-	if s.gap, err = s.newStream(func() *logb.Schema { return GapSchema(cfg.Source) }); err != nil {
-		return nil, err
-	}
-	if s.mode, err = s.newStream(func() *logb.Schema { return ModeSchema(cfg.Source) }); err != nil {
-		return nil, err
-	}
-	for _, a := range slices.Sorted(maps.Keys(c.Actions)) {
-		what := c.Actions[a]
-		if s.actions[a], err = s.newStream(func() *logb.Schema { return ActionSchema(a, what, cfg.Source) }); err != nil {
-			return nil, err
-		}
 	}
 	for _, w := range []*record.Writer{s.file, s.sub} {
 		if err := w.DeclareControl(instrument, "dut"); err != nil {
 			return nil, err
 		}
 	}
-	s.fileOps, s.fileDone = make(chan fileOp, 1<<14), make(chan struct{})
 	go s.writeFile()
-	t := cfg.Now()
-	for _, name := range c.Order {
-		s.writeTransition(monitor.Transition{T: t.UnixNano(), Monitor: name, From: monitor.Unknown,
-			To: monitor.Unknown, Cause: "start"})
-	}
-	s.writeMode(t, ModeRecord{Event: ModeStart})
 	if s.err != nil {
 		return nil, s.err
 	}
 	return s, nil
+}
+
+// serverWriter is the Server's recording as the core's Writer.
+type serverWriter struct{ s *Server }
+
+func (w serverWriter) NewStream(mk func() *logb.Schema) (any, error) { return w.s.newStream(mk) }
+func (w serverWriter) Write(st any, t time.Time, fill func(rec []byte)) error {
+	w.s.write(st.(*Stream), t, fill)
+	return w.s.err
+}
+
+// do is the core's Do: f, under the lock, unless the server has stopped.
+func (s *Server) do(f func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.closed {
+		f()
+	}
 }
 
 func cloneSchema(sc *logb.Schema) *logb.Schema {
@@ -416,7 +367,7 @@ func init() {
 }
 
 // Contract is the loaded contract.
-func (s *Server) Contract() *monitor.Contract { return s.c }
+func (s *Server) Contract() *monitor.Contract { return s.core.Contract() }
 
 // Stream is one of the host's streams, by name; nil if Config.Streams did
 // not declare it.
@@ -432,7 +383,7 @@ func (s *Server) Write(st *Stream, t time.Time, fill func(rec []byte)) error {
 	if s.closed {
 		return errors.New("secondary: the server has stopped")
 	}
-	s.tap.SetClock(s.cfg.Now())
+	s.core.SetClock(s.cfg.Now())
 	s.write(st, t, fill)
 	return s.err
 }
@@ -453,7 +404,7 @@ func (s *Server) write(st *Stream, t time.Time, fill func(rec []byte)) {
 		s.err = err
 		return
 	}
-	s.tap.Record(st.name, t, cp)
+	s.core.Input(st.name, t, cp)
 	s.toFile(fileOp{st: st.file, t: t, rec: cp})
 }
 
@@ -504,26 +455,6 @@ func (s *Server) writeFile() {
 	s.fileMu.Unlock()
 }
 
-func (s *Server) writeTransition(x monitor.Transition) {
-	s.write(s.mons[x.Monitor], time.Unix(0, x.T), func(rec []byte) { PutTransition(rec, x) })
-}
-
-func (s *Server) writeMode(t time.Time, m ModeRecord) {
-	m.Requested, m.Applied = s.requested, s.applied
-	s.write(s.mode, t, func(rec []byte) { PutMode(rec, m) })
-}
-
-func (s *Server) writeAction(t time.Time, run *actionRun, ev byte, o peer.Outcome, msg string) {
-	a := ActionRecord{Seq: run.seq, Run: run.n, Event: ev, Via: byte(record.ViaTLS), By: run.by, Message: msg}
-	if o != "" {
-		a.Outcome = byte(slices.Index(peer.Outcomes, o) + 1)
-	}
-	if run.mode != nil {
-		a.Mode = *run.mode
-	}
-	s.write(s.actions[run.action], t, func(rec []byte) { PutAction(rec, a) })
-}
-
 // control records a decision on the DUT, with the state it leaves. Called
 // with the lock.
 func (s *Server) control(t time.Time, req record.ControlRequest, v record.ControlVerdict, seq uint32, by, channel string) {
@@ -550,10 +481,7 @@ func (s *Server) control(t time.Time, req record.ControlRequest, v record.Contro
 // stops the action under way and closes the recording. It returns the
 // first error writing the recording, which also ends it.
 func (s *Server) Run(ctx context.Context) error {
-	go func() {
-		s.online.Run(s.monIn, s.out)
-		close(s.out)
-	}()
+	go s.core.Run()
 	tick := time.NewTicker(s.cfg.Tick)
 	defer tick.Stop()
 	flush := time.NewTicker(200 * time.Millisecond)
@@ -565,8 +493,8 @@ func (s *Server) Run(ctx context.Context) error {
 		case <-tick.C:
 			s.mu.Lock()
 			now := s.cfg.Now()
-			s.tap.SetClock(now)
-			s.tap.Tick(now)
+			s.core.SetClock(now)
+			s.core.Tick()
 			s.expire(now)
 			err := s.err
 			s.mu.Unlock()
@@ -574,9 +502,9 @@ func (s *Server) Run(ctx context.Context) error {
 				s.shutdown()
 				return err
 			}
-		case o := <-s.out:
+		case o := <-s.core.Outputs():
 			s.mu.Lock()
-			s.output(o)
+			s.core.Output(o)
 			s.mu.Unlock()
 		case <-flush.C:
 			s.mu.Lock()
@@ -585,21 +513,6 @@ func (s *Server) Run(ctx context.Context) error {
 			}
 			s.mu.Unlock()
 		}
-	}
-}
-
-// output records what the evaluator produced: its transitions, the gap
-// that caused some of them, then the watermark over all of it.
-func (s *Server) output(o monitor.Output) {
-	for _, x := range o.Transitions {
-		s.writeTransition(x)
-	}
-	if g := o.Gap; g != nil {
-		s.write(s.gap, time.Unix(0, g.T), func(rec []byte) { PutGap(rec, g) })
-	}
-	if wm := o.Watermark; wm != 0 && wm > s.lastWM {
-		s.lastWM = wm
-		s.write(s.wm, time.Unix(0, wm), func(rec []byte) { PutWatermark(rec, wm) })
 	}
 }
 
@@ -618,17 +531,14 @@ func (s *Server) shutdown() error {
 		s.mu.Unlock()
 		return s.err
 	}
-	if s.run != nil {
-		s.run.stopped = "the DUT rack stopped"
-		s.run.cancel()
-	}
+	s.core.Stop("the DUT rack stopped")
 	s.control(s.cfg.Now(), record.ControlShutdown, record.VerdictAccepted, 0, "", "")
-	s.tap.Close()
+	s.core.Close()
 	s.mu.Unlock()
 	// What the evaluator still had, recorded; then nothing more.
-	for o := range s.out {
+	for o := range s.core.Outputs() {
 		s.mu.Lock()
-		s.output(o)
+		s.core.Output(o)
 		s.mu.Unlock()
 	}
 	s.mu.Lock()
@@ -713,13 +623,7 @@ func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 }
 
 func (s *Server) getContract(w http.ResponseWriter, r *http.Request) {
-	reply(w, http.StatusOK, map[string]any{
-		"protocol":        peer.Protocol,
-		"contract":        s.c.Name,
-		"sha256":          s.c.Hash,
-		"resource_sha256": s.c.ResourceHash,
-		"provenance":      s.provence,
-	})
+	reply(w, http.StatusOK, s.core.Info(s.provence))
 }
 
 func (s *Server) getClock(w http.ResponseWriter, r *http.Request) {
@@ -871,10 +775,7 @@ func (s *Server) disarm(w http.ResponseWriter, r *http.Request) {
 	s.seq++
 	seq := s.seq
 	s.armed = false
-	if s.run != nil {
-		s.run.stopped = "the DUT was disarmed by " + callerOf(r).Name
-		s.run.cancel()
-	}
+	s.core.Stop("the DUT was disarmed by " + callerOf(r).Name)
 	s.control(s.cfg.Now(), record.ControlDisarm, record.VerdictAccepted, seq, callerOf(r).Name, "")
 	s.mu.Unlock()
 	if s.cfg.OnDisarm != nil {
@@ -894,9 +795,9 @@ func (s *Server) setMode(w http.ResponseWriter, r *http.Request) {
 	case body.Value == nil:
 		refuse(w, http.StatusBadRequest, 0, `"value" is required: the mode, or "" for none`)
 		return
-	case *body.Value != "" && s.c.Modes[*body.Value] == nil:
+	case *body.Value != "" && s.core.Contract().Modes[*body.Value] == nil:
 		refuse(w, http.StatusNotFound, 0, "the contract has no mode %q; its modes are %s", *body.Value,
-			strings.Join(slices.Sorted(maps.Keys(s.c.Modes)), ", "))
+			strings.Join(slices.Sorted(maps.Keys(s.core.Contract().Modes)), ", "))
 		return
 	}
 	mode := *body.Value
@@ -907,31 +808,21 @@ func (s *Server) setMode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	by, t := callerOf(r).Name, s.cfg.Now()
-	if s.run != nil {
+	if a, busy := s.core.Busy(); busy {
 		s.control(t, record.ControlMode, record.VerdictBusy, seq, by, mode)
-		refuse(w, http.StatusConflict, seq, "the DUT is busy: action %s is under way", s.run.action)
+		refuse(w, http.StatusConflict, seq, "the DUT is busy: action %s is under way", a)
 		return
 	}
 	s.control(t, record.ControlMode, record.VerdictAccepted, seq, by, mode)
-	s.requested = mode
-	s.writeMode(t, ModeRecord{Seq: seq, Event: ModeRequested, By: by})
-	action := ""
-	if m := s.c.Modes[mode]; m != nil {
-		action = m.Action
-	}
-	if action == "" {
-		s.applyMode(mode, seq, by, t)
-	} else {
-		s.start(&actionRun{action: action, mode: &mode, seq: seq, by: by}, t)
-	}
+	s.core.SetMode(seq, By{Name: by, Via: record.ViaTLS}, mode, t)
 	reply(w, http.StatusAccepted, map[string]any{"seq": seq})
 }
 
 func (s *Server) invoke(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("action")
-	if _, ok := s.c.Actions[name]; !ok {
+	if _, ok := s.core.Contract().Actions[name]; !ok {
 		refuse(w, http.StatusNotFound, 0, "the contract has no action %q; its actions are %s", name,
-			strings.Join(slices.Sorted(maps.Keys(s.c.Actions)), ", "))
+			strings.Join(slices.Sorted(maps.Keys(s.core.Contract().Actions)), ", "))
 		return
 	}
 	s.mu.Lock()
@@ -941,80 +832,14 @@ func (s *Server) invoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	by, t := callerOf(r).Name, s.cfg.Now()
-	if s.run != nil {
+	if a, busy := s.core.Busy(); busy {
 		s.control(t, record.ControlAction, record.VerdictBusy, seq, by, name)
-		refuse(w, http.StatusConflict, seq, "the DUT is busy: action %s is under way", s.run.action)
+		refuse(w, http.StatusConflict, seq, "the DUT is busy: action %s is under way", a)
 		return
 	}
 	s.control(t, record.ControlAction, record.VerdictAccepted, seq, by, name)
-	s.start(&actionRun{action: name, seq: seq, by: by}, t)
+	s.core.Invoke(seq, By{Name: by, Via: record.ViaTLS}, name, t)
 	reply(w, http.StatusAccepted, map[string]any{"seq": seq})
-}
-
-// applyMode puts the DUT in a mode from t: recorded, and handed to the
-// monitors, which settle from t for the mode's settle time. Called with the
-// lock.
-func (s *Server) applyMode(mode string, seq uint32, by string, t time.Time) {
-	// The wall clock alone: the monitors take Unix nanoseconds, and a
-	// monotonic reading would put the mode a few nanoseconds off the
-	// recording's own account of t.
-	t = t.Round(0)
-	s.applied = mode
-	s.writeMode(t, ModeRecord{Seq: seq, Event: ModeApplied, By: by})
-	s.tap.Mode(s.tap.Clock(), t, mode)
-}
-
-// start runs an action on a goroutine of its own. Called with the lock.
-func (s *Server) start(run *actionRun, t time.Time) {
-	s.runs++
-	run.n = s.runs
-	timeout := s.cfg.ActionTimeout
-	if d, ok := s.c.Timeouts[run.action]; ok && d > 0 {
-		timeout = d
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	run.cancel = cancel
-	s.run = run
-	s.writeAction(t, run, ActionStarted, "", "")
-	go func() {
-		err := s.cfg.Actions.Run(ctx, run.action)
-		deadline := errors.Is(ctx.Err(), context.DeadlineExceeded)
-		cancel()
-		s.end(run, err, deadline, timeout)
-	}()
-}
-
-// end records an action's end, and applies the mode it entered, or says it
-// failed.
-func (s *Server) end(run *actionRun, err error, deadline bool, timeout time.Duration) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	t := s.cfg.Now()
-	if s.run == run {
-		s.run = nil
-	}
-	o, msg := peer.OK, ""
-	var f *peer.Failure
-	switch {
-	case run.stopped != "":
-		o, msg = peer.Stopped, run.stopped
-	case deadline:
-		o, msg = peer.Timeout, fmt.Sprintf("action %s did not end within its timeout, %v", run.action, timeout)
-	case errors.As(err, &f):
-		o, msg = f.Outcome, f.Msg
-	case err != nil:
-		o, msg = peer.Fail, err.Error()
-	}
-	s.writeAction(t, run, ActionEnded, o, msg)
-	if run.mode == nil {
-		return
-	}
-	if o == peer.OK {
-		s.applyMode(*run.mode, run.seq, run.by, t)
-		return
-	}
-	s.writeMode(t, ModeRecord{Seq: run.seq, Event: ModeFailed, By: run.by,
-		Message: fmt.Sprintf("entry action %s: %s: %s", run.action, o, msg)})
 }
 
 func parseTTL(s string) (time.Duration, error) {

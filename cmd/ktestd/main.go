@@ -235,6 +235,7 @@ import (
 	"github.com/trukeio/ktest/contract"
 	"github.com/trukeio/ktest/monitor"
 	"github.com/trukeio/ktest/peer"
+	"github.com/trukeio/ktest/procedure"
 	"github.com/trukeio/ktest/procedure/lib"
 	"github.com/trukeio/ktest/psu"
 	"github.com/trukeio/ktest/record"
@@ -507,10 +508,11 @@ func main() {
 	// A contract is checked before anything is written, against the streams
 	// this daemon will record, so that one naming a channel it never will
 	// refuses the start.
-	var dm *dutMon
+	var core *secondary.Core
 	var di *dutInst
-	var online *monitor.Online
-	var monIn <-chan monitor.Item
+	// The core hands an action's end back to the loop through the daemon,
+	// which does not exist yet; no action runs before it does.
+	var dref *daemon
 	if *contractPath != "" {
 		switch {
 		case *monWindow < 0 || *monTick <= 0 || *watermark <= 0 || *monQueue <= 0:
@@ -523,14 +525,23 @@ func main() {
 		if err != nil {
 			fatalf("contract: %v", err)
 		}
-		c, err := loadContract(*contractPath, ct, &cfg)
+		acts := &dutActions{}
+		core, err = secondary.NewCore(secondary.CoreConfig{Contract: *contractPath, Channels: ct,
+			Check: procedure.CheckActions, Actions: acts, Source: dutSource, MonitorSource: monSource,
+			Window: *monWindow, WatermarkEvery: *watermark, Queue: *monQueue,
+			Do: func(f func()) { dref.dutJob(func(*loop) { f() }) }})
 		if err != nil {
 			fatalf("contract: %v", err)
 		}
-		if online, err = monitor.NewOnline(c, *monWindow, *watermark); err != nil {
+		c := core.Contract()
+		// The contract is stated in the recording, and it and its resource
+		// embedded, as limits.json is.
+		maps.Copy(cfg.Meta, core.Meta())
+		att, err := core.Attach()
+		if err != nil {
 			fatalf("contract: %v", err)
 		}
-		dm = &dutMon{c: c, out: make(chan monitor.Output, 64), tick: *monTick}
+		maps.Copy(cfg.Attach, att)
 		// The actions' resource is checked now too, with the DUT library,
 		// against this rack's database, channels and monitors: an action that
 		// would fail on the day it is first asked for refuses the start.
@@ -558,10 +569,7 @@ func main() {
 		if di, err = newDutInst(stub, c, ct); err != nil {
 			fatalf("contract: %v", err)
 		}
-		dm.tap, monIn = monitor.NewTap(online, *monQueue)
-		cfg.Meta["dut.monitors.window"] = monWindow.String()
-		cfg.Meta["dut.monitors.watermark"] = watermark.String()
-		cfg.Meta["dut.monitors.queue"] = strconv.Itoa(*monQueue)
+		di.core, acts.di = core, di
 	}
 
 	// The network listener's credentials are settled before anything is opened,
@@ -654,11 +662,11 @@ func main() {
 		fatalf("%v", err)
 	}
 	cfg.OnStream, cfg.OnRecord = table.Stream, table.Record
-	if dm != nil {
-		// The monitors' tap, beside the table: it never blocks the loop.
+	if core != nil {
+		// The monitors' input, beside the table: it never blocks the loop.
 		cfg.OnRecord = func(s *logb.Schema, t time.Time, rec []byte) {
 			table.Record(s, t, rec)
-			dm.tap.Record(s.Name, t, rec)
+			core.Input(s.Name, t, rec)
 		}
 	}
 	fw, err := record.New(io.MultiWriter(bw, hub), cfg)
@@ -707,12 +715,10 @@ func main() {
 	// mid-handshake, say — through a logger; this one says whose it is.
 	srvLog := log.New(os.Stderr, "ktestd: ", 0)
 	d.subHub = subHub
-	var dutStop context.CancelFunc
-	d.dutHard, dutStop = context.WithCancel(context.Background())
-	defer dutStop()
-	if dm != nil {
-		d.procs.contract = dm.c.Hash
-		d.contract = dm.c
+	dref = d
+	if core != nil {
+		d.procs.contract = core.Contract().Hash
+		d.contract, d.dutCore = core.Contract(), core
 		d.provenance = cfg.Meta
 		di.bind(d, table)
 	}
@@ -888,18 +894,16 @@ func main() {
 				*lockPath, lock.hash, then)
 		}
 	}
-	if dm != nil {
-		if err := dm.declare(w, time.Now()); err != nil {
-			fatalf("%v", err)
-		}
+	if core != nil {
 		if err := di.declare(w, time.Now()); err != nil {
 			fatalf("%v", err)
 		}
 		l.insts[dutName] = &inst{name: dutName, dut: di}
-		l.mon = dm
-		go online.Run(monIn, dm.out)
+		l.core, l.monTick = core, *monTick
+		go core.Run()
+		c := core.Contract()
 		fmt.Fprintf(os.Stderr, "ktestd: contract %s (sha256 %.12s…), %d monitors live, window %v, watermark every %v\n",
-			dm.c.Name, dm.c.Hash, len(dm.c.Order), *monWindow, *watermark)
+			c.Name, c.Hash, len(c.Order), *monWindow, *watermark)
 	}
 	var peerEvents <-chan peerMsg
 	if ps != nil {
@@ -1170,8 +1174,7 @@ type daemon struct {
 	// The DUT rack's, with -contract.
 	contract   *monitor.Contract
 	provenance map[string]string // the recording's metadata as it started, for GET /dut/contract
-	dutHard    context.Context   // cancelled as the daemon stops, ending the action under way
-	dutCur     dutState          // the action under way, for its keywords
+	dutCore    *secondary.Core   // -contract: the DUT rack's core, for GET /dut/contract
 }
 
 type reqKind int
@@ -1363,8 +1366,9 @@ type loop struct {
 	queue []pending // sent and not yet handed back, oldest first
 	tasks map[uint32]*task
 
-	mon        *dutMon  // -contract: the live monitors; nil without
-	peers      *peerSet // -peer: the DUT racks; nil without
+	core       *secondary.Core // -contract: the DUT rack's core; nil without
+	monTick    time.Duration   // how often the core is given the loop's clock
+	peers      *peerSet        // -peer: the DUT racks; nil without
 	peerEvents <-chan peerMsg
 }
 
@@ -1387,19 +1391,19 @@ func (l *loop) run(rx, echo <-chan can.Frame, done <-chan struct{}, fail <-chan 
 	}
 	var monTick <-chan time.Time
 	var monOut <-chan monitor.Output
-	if l.mon != nil {
-		mt := time.NewTicker(l.mon.tick)
+	if l.core != nil {
+		mt := time.NewTicker(l.monTick)
 		defer mt.Stop()
-		monTick, monOut = mt.C, l.mon.out
+		monTick, monOut = mt.C, l.core.Outputs()
 	}
 
 	for {
-		if l.mon != nil && l.caughtUp(rx, echo) {
+		if l.core != nil && l.caughtUp(rx, echo) {
 			// Everything the sources had sent has been taken in, so a record
 			// stamped before now has been written: the monitors' clock may
 			// stand here. Behind a backlog it stays where it was, and the
 			// watermark with it, rather than running past what still waits.
-			l.mon.tap.SetClock(time.Now())
+			l.core.SetClock(time.Now())
 		}
 		select {
 		case f := <-rx:
@@ -1436,12 +1440,15 @@ func (l *loop) run(rx, echo <-chan can.Frame, done <-chan struct{}, fail <-chan 
 
 		case <-monTick:
 			if l.caughtUp(rx, echo) {
-				l.mon.tap.SetClock(time.Now())
+				l.core.SetClock(time.Now())
 			}
-			l.mon.tap.Tick(l.mon.tap.Clock())
+			l.core.Tick()
 
 		case o := <-monOut:
-			l.mon.write(l.w, o)
+			l.core.Output(o)
+			if err := l.core.Err(); err != nil {
+				fatalf("write: %v", err)
+			}
 
 		case e := <-l.peerEvents:
 			l.peerEvent(e)
@@ -1560,8 +1567,10 @@ func (l *loop) handle(r *request) reply {
 		return reply{seq: l.seq}
 	}
 	v, err := l.admit(in, r)
-	if err == nil && (r.kind == reqDutMode || r.kind == reqDutAction) && in.dut.run != nil {
-		v, err = record.VerdictBusy, fmt.Errorf("%w: action %s is under way", errDutBusy, in.dut.run.action)
+	if err == nil && (r.kind == reqDutMode || r.kind == reqDutAction) {
+		if a, busy := in.dut.core.Busy(); busy {
+			v, err = record.VerdictBusy, fmt.Errorf("%w: action %s is under way", errDutBusy, a)
+		}
 	}
 	if err != nil {
 		l.control(in, t, r, v)

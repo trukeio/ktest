@@ -4,18 +4,10 @@ package main
 
 import (
 	"net/http"
-	"os"
-	"path/filepath"
-	"strconv"
-	"time"
 
-	"github.com/trukeio/logb"
 	"github.com/trukeio/logb/dbc"
 
 	"github.com/trukeio/ktest/channel"
-	"github.com/trukeio/ktest/monitor"
-	"github.com/trukeio/ktest/peer"
-	"github.com/trukeio/ktest/procedure"
 	"github.com/trukeio/ktest/record"
 	"github.com/trukeio/ktest/secondary"
 	"github.com/trukeio/ktest/stream"
@@ -27,10 +19,11 @@ import (
 // contract's monitors live, over the records it writes, and serves them with
 // everything else it records on /stream/sub, record by record.
 //
-// The monitors are evaluated on a goroutine of their own, fed from the
-// recorder through a tap that never blocks the loop (package monitor, Online).
-// Their transitions come back to the loop and are recorded like any other
-// source:
+// The contract, the monitors and the DUT's modes and actions are package
+// secondary's Core, the same as every DUT rack built on it. The monitors are
+// evaluated on a goroutine of their own, fed from the recorder through a tap
+// that never blocks the loop. Their transitions come back to the loop and are
+// recorded like any other source:
 //
 //	mon.<name>      a held state, ok, dev, unknown, inactive or settling, at the
 //	                time of the sample or deadline that caused it, with the
@@ -93,107 +86,12 @@ func declareDecoded(t *channel.Table, bus string, db *dbc.File) error {
 	return nil
 }
 
-// loadContract loads -contract and states it in the recording: name, hash and
-// source, the resource's hash, and both files embedded, as limits.json is.
-func loadContract(p string, ch *channel.Table, cfg *record.Config) (*monitor.Contract, error) {
-	c, err := monitor.Load(p, ch, procedure.CheckActions)
-	if err != nil {
-		return nil, err
-	}
-	raw, err := os.ReadFile(p)
-	if err != nil {
-		return nil, err
-	}
-	cfg.Meta["peer.protocol"] = strconv.Itoa(peer.Protocol)
-	cfg.Meta["dut.contract"] = c.Name
-	cfg.Meta["dut.contract.sha256"] = c.Hash
-	cfg.Meta["dut.contract.source"] = p
-	cfg.Attach["dut-interface.json"] = raw
-	if c.Resource != "" {
-		rp := filepath.Join(filepath.Dir(p), c.Resource)
-		rb, err := os.ReadFile(rp)
-		if err != nil {
-			return nil, err
-		}
-		cfg.Meta["dut.resource"] = c.Resource
-		cfg.Meta["dut.resource.sha256"] = c.ResourceHash
-		cfg.Attach[filepath.Base(c.Resource)] = rb
-	}
-	return c, nil
-}
-
-// dutMon is the loop's side of the live monitors.
-type dutMon struct {
-	c      *monitor.Contract
-	tap    *monitor.Tap
-	out    chan monitor.Output
-	tick   time.Duration
-	mons   map[string]*teeStream
-	wm     *teeStream
-	gap    *teeStream
-	lastWM int64
-}
-
 // The DUT rack's streams, as package secondary lays them out for every DUT
 // rack, ktestd's included (doc/peer-protocol.md §7.4).
 const (
 	monSource = "the ktestd monitor evaluator"
 	dutSource = "the ktestd DUT rack"
 )
-
-// declare lays out the monitor streams and states every monitor unknown from
-// the start, so that a reader meets each one held from the first segment.
-func (m *dutMon) declare(w *tee, t time.Time) error {
-	m.mons = map[string]*teeStream{}
-	for _, name := range m.c.Order {
-		s, err := w.NewStream(func() *logb.Schema { return secondary.MonSchema(m.c, name, monSource) })
-		if err != nil {
-			return err
-		}
-		m.mons[name] = s
-	}
-	var err error
-	if m.wm, err = w.NewStream(func() *logb.Schema { return secondary.WatermarkSchema(monSource) }); err != nil {
-		return err
-	}
-	if m.gap, err = w.NewStream(func() *logb.Schema { return secondary.GapSchema(monSource) }); err != nil {
-		return err
-	}
-	for _, name := range m.c.Order {
-		if err := m.transition(w, monitor.Transition{T: t.UnixNano(), Monitor: name,
-			From: monitor.Unknown, To: monitor.Unknown, Cause: "start"}); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (m *dutMon) transition(w *tee, x monitor.Transition) error {
-	return w.Write(time.Unix(0, x.T), m.mons[x.Monitor], func(rec []byte) { secondary.PutTransition(rec, x) })
-}
-
-// write records what the evaluator produced: its transitions, the gap that
-// caused some of them, then the watermark over all of it.
-func (m *dutMon) write(w *tee, o monitor.Output) {
-	for _, x := range o.Transitions {
-		if err := m.transition(w, x); err != nil {
-			fatalf("write: %v", err)
-		}
-	}
-	if g := o.Gap; g != nil {
-		err := w.Write(time.Unix(0, g.T), m.gap, func(rec []byte) { secondary.PutGap(rec, g) })
-		if err != nil {
-			fatalf("write: %v", err)
-		}
-	}
-	if wm := o.Watermark; wm != 0 && wm > m.lastWM {
-		m.lastWM = wm
-		err := w.Write(time.Unix(0, wm), m.wm, func(rec []byte) { secondary.PutWatermark(rec, wm) })
-		if err != nil {
-			fatalf("write: %v", err)
-		}
-	}
-}
 
 // # /stream/sub
 //

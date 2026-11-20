@@ -12,8 +12,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/trukeio/logb"
@@ -42,8 +40,12 @@ import (
 //	PUT    /dut/mode            {"value": "active"}: run the mode's entry action, then apply it
 //	POST   /dut/actions/{name}  run an action
 //
-// An action is a keyword of the contract's resource file, run by the procedure
-// executor with the DUT library (lib.NewDUT), one at a time. Its acts — sends,
+// What a mode and an action are — the entry action, the settling, the
+// timeout, the stop, the outcome and their records — is package secondary's
+// Core, shared with every DUT rack built on it. What is ktestd's is the
+// control plane in front of it, the same as its bus's and instruments', and
+// what an action is: a keyword of the contract's resource file, run by the
+// procedure executor with the DUT library (lib.NewDUT). Its acts — sends,
 // cyclic tasks, channel writes — are requests of the control plane like any
 // client's, recorded in the stream of the instrument they act on with via 4
 // and the name that asked for the action. They are admitted while dut is
@@ -64,33 +66,16 @@ import (
 
 var errDutBusy = errors.New("the DUT is busy")
 
-// dutInst is the dut instrument's own state, on the loop.
+// dutInst is the dut instrument's own state, on the loop: the core, and
+// what runs the actions it starts.
 type dutInst struct {
+	core    *secondary.Core
 	c       *monitor.Contract
 	suite   *procedure.Suite // the actions' resource, nil when the contract has none
 	adapter *dutAdapter
+	d       *daemon
 
-	mode    *teeStream
-	actions map[string]*teeStream
-	step    *teeStream
-
-	requested, applied string
-	run                *dutRun // the action under way, nil when none
-	n                  uint32  // actions started since the daemon did
-}
-
-// dutRun is one action under way: an action asked for, or a mode's entry.
-type dutRun struct {
-	n      uint32
-	action string
-	mode   *string // the mode it enters, nil for a plain action
-	seq    uint32
-	who    caller
-	cancel context.CancelFunc
-
-	// why it was stopped, when it was: set on the loop before cancel, read
-	// after the action's goroutine has seen the cancel.
-	stopped atomic.Pointer[string]
+	step *teeStream
 }
 
 func dutStepSchema() *logb.Schema {
@@ -111,7 +96,7 @@ func dutStepSchema() *logb.Schema {
 // every action must be a keyword callable with no arguments: a contract that
 // would fail on the day an action is first asked for refuses the start.
 func newDutInst(d *daemon, c *monitor.Contract, table *channel.Table) (*dutInst, error) {
-	di := &dutInst{c: c}
+	di := &dutInst{c: c, d: d}
 	if c.Resource == "" {
 		return di, nil
 	}
@@ -135,144 +120,67 @@ func newDutInst(d *daemon, c *monitor.Contract, table *channel.Table) (*dutInst,
 // daemon's configuration, so that a bad one refused the start before anything
 // was written.
 func (di *dutInst) bind(d *daemon, table *channel.Table) {
+	di.d = d
 	if di.adapter != nil {
 		di.adapter.d, di.adapter.table = d, table
 	}
 }
 
-// declare lays out the DUT rack's streams, and states no mode from the start.
+// declare lays out the core's streams and the actions' steps, and states
+// every monitor unknown and no mode from the start.
 func (di *dutInst) declare(w *tee, t time.Time) error {
 	var err error
-	if di.mode, err = w.NewStream(func() *logb.Schema { return secondary.ModeSchema(dutSource) }); err != nil {
-		return err
-	}
 	if di.step, err = w.NewStream(dutStepSchema); err != nil {
 		return err
 	}
-	di.actions = map[string]*teeStream{}
-	for _, a := range slices.Sorted(maps.Keys(di.c.Actions)) {
-		kw := di.c.Actions[a]
-		if di.actions[a], err = w.NewStream(func() *logb.Schema { return secondary.ActionSchema(a, kw, dutSource) }); err != nil {
-			return err
-		}
+	return di.core.Declare(teeWriter{w}, t)
+}
+
+// teeWriter is the daemon's recording as the core's Writer. Only the loop
+// writes it, and the core is only called on the loop.
+type teeWriter struct{ w *tee }
+
+func (t teeWriter) NewStream(mk func() *logb.Schema) (any, error) { return t.w.NewStream(mk) }
+func (t teeWriter) Write(s any, at time.Time, fill func(rec []byte)) error {
+	return t.w.Write(at, s.(*teeStream), fill)
+}
+
+// dutActions is the core's Actions, given the dut instrument once there is
+// one: the core is made first, since the instrument's resource is checked
+// against the contract the core loads.
+type dutActions struct{ di *dutInst }
+
+func (a *dutActions) Run(ctx context.Context, action string) error { return a.di.Run(ctx, action) }
+
+// Run is secondary.Actions: an action is a keyword of the resource, run by
+// the procedure executor, its acts requests of the control plane in the
+// name of whoever asked for it. Its timeout and its stop are the core's.
+func (di *dutInst) Run(ctx context.Context, action string) error {
+	info, _ := secondary.ActionInfoFrom(ctx)
+	res := di.suite.Call(ctx, di.c.Actions[action], &dutHost{d: di.d, n: info.Run})
+	if res.Outcome == procedure.OK {
+		return nil
 	}
-	return di.writeMode(w, t, 0, 0, caller{}, "")
-}
-
-func (di *dutInst) writeMode(w *tee, t time.Time, seq uint32, ev byte, who caller, msg string) error {
-	return w.Write(t, di.mode, func(rec []byte) {
-		secondary.PutMode(rec, secondary.ModeRecord{Seq: seq, Event: ev, Requested: di.requested,
-			Applied: di.applied, By: who.name, Message: msg})
-	})
-}
-
-func (di *dutInst) writeAction(w *tee, t time.Time, run *dutRun, ev byte, o procedure.Outcome, msg string) error {
-	return w.Write(t, di.actions[run.action], func(rec []byte) {
-		a := secondary.ActionRecord{Seq: run.seq, Run: run.n, Event: ev, Outcome: outcomeCode(o),
-			Via: byte(run.who.via), By: run.who.name, Message: msg}
-		if run.mode != nil {
-			a.Mode = *run.mode
-		}
-		secondary.PutAction(rec, a)
-	})
+	msg := res.Msg
+	if res.Pos.File != "" && msg != "" {
+		msg = res.Pos.String() + ": " + msg
+	}
+	return &peer.Failure{Outcome: peer.Outcome(res.Outcome), Msg: msg}
 }
 
 // dutRequest is a mode change or an action, admitted: on the loop, after the
-// decision is recorded.
+// decision is recorded, carried out by the core.
 func (l *loop) dutRequest(in *inst, r *request, t time.Time) reply {
-	di := in.dut
+	by := secondary.By{Name: r.who.name, Via: r.who.via}
 	if r.kind == reqDutMode {
-		di.requested = r.name
-		if err := di.writeMode(l.w, t, l.seq, secondary.ModeRequested, r.who, ""); err != nil {
-			fatalf("write: %v", err)
-		}
-		action := ""
-		if m := di.c.Modes[r.name]; m != nil {
-			action = m.Action
-		}
-		if action == "" {
-			l.applyMode(di, r.name, l.seq, r.who, t)
-			return reply{seq: l.seq}
-		}
-		mode := r.name
-		l.startAction(di, &dutRun{action: action, mode: &mode, seq: l.seq, who: r.who}, t)
-		return reply{seq: l.seq}
+		in.dut.core.SetMode(l.seq, by, r.name, t)
+	} else {
+		in.dut.core.Invoke(l.seq, by, r.name, t)
 	}
-	l.startAction(di, &dutRun{action: r.name, seq: l.seq, who: r.who}, t)
+	if err := in.dut.core.Err(); err != nil {
+		fatalf("write: %v", err)
+	}
 	return reply{seq: l.seq}
-}
-
-// applyMode puts the DUT in a mode from t: recorded, and handed to the
-// monitors, which settle from t for the mode's settle time.
-func (l *loop) applyMode(di *dutInst, mode string, seq uint32, who caller, t time.Time) {
-	// The wall clock alone: the recorder measures a time with a monotonic
-	// reading from its epoch by that reading, and the monitors take Unix
-	// nanoseconds, and the two differ by the clocks' drift since the start
-	// (measured: 9 ns after 2 s). Without it both say the same instant.
-	t = t.Round(0)
-	di.applied = mode
-	if err := di.writeMode(l.w, t, seq, secondary.ModeApplied, who, ""); err != nil {
-		fatalf("write: %v", err)
-	}
-	if l.mon != nil {
-		l.mon.tap.Mode(l.mon.tap.Clock(), t, mode)
-	}
-}
-
-func (l *loop) startAction(di *dutInst, run *dutRun, t time.Time) {
-	di.n++
-	run.n = di.n
-	timeout := 30 * time.Second
-	if d, ok := di.c.Timeouts[run.action]; ok && d > 0 {
-		timeout = d
-	}
-	ctx, cancel := context.WithTimeout(l.d.dutHard, timeout)
-	run.cancel = cancel
-	di.run = run
-	l.d.dutCur.Store(run)
-	if err := di.writeAction(l.w, t, run, 1, "", ""); err != nil {
-		fatalf("write: %v", err)
-	}
-	go l.d.execute(ctx, di, run, timeout)
-}
-
-// execute runs an action to its end on a goroutine of its own, and hands the
-// end back to the loop.
-func (d *daemon) execute(ctx context.Context, di *dutInst, run *dutRun, timeout time.Duration) {
-	res := di.suite.Call(ctx, di.c.Actions[run.action], &dutHost{d: d, run: run})
-	switch {
-	case errors.Is(ctx.Err(), context.DeadlineExceeded):
-		res.Outcome, res.Msg, res.Pos = procedure.Timeout,
-			fmt.Sprintf("action %s did not end within its timeout, %v", run.action, timeout), procedure.Pos{}
-	case run.stopped.Load() != nil:
-		res.Outcome, res.Msg, res.Pos = procedure.Stopped, *run.stopped.Load(), procedure.Pos{}
-	}
-	run.cancel()
-	d.dutJob(func(l *loop) {
-		t := time.Now()
-		if di.run == run {
-			di.run = nil
-			d.dutCur.Store(nil)
-		}
-		msg := res.Msg
-		if res.Pos.File != "" && msg != "" {
-			msg = res.Pos.String() + ": " + msg
-		}
-		if err := di.writeAction(l.w, t, run, 2, res.Outcome, msg); err != nil {
-			fatalf("write: %v", err)
-		}
-		if run.mode == nil {
-			return
-		}
-		if res.Outcome == procedure.OK {
-			l.applyMode(di, *run.mode, run.seq, run.who, t)
-			return
-		}
-		if err := di.writeMode(l.w, t, run.seq, secondary.ModeFailed, run.who,
-			fmt.Sprintf("entry action %s: %s: %s", run.action, res.Outcome, msg)); err != nil {
-			fatalf("write: %v", err)
-		}
-	})
 }
 
 // dutJob runs f on the loop, unless the loop has stopped taking work.
@@ -286,17 +194,12 @@ func (d *daemon) dutJob(f func(l *loop)) {
 // stopAction ends the action under way, as a disarm of dut, the stop or the
 // daemon stopping does, saying which. Its end is recorded when its goroutine
 // has finished.
-func (di *dutInst) stopAction(why string) {
-	if di.run != nil {
-		di.run.stopped.Store(&why)
-		di.run.cancel()
-	}
-}
+func (di *dutInst) stopAction(why string) { di.core.Stop(why) }
 
 // dutHost is what an action sees of the daemon.
 type dutHost struct {
-	d   *daemon
-	run *dutRun
+	d *daemon
+	n uint32 // the action run
 }
 
 func (h *dutHost) Resolve(name string) (expr.Type, error) { return h.d.procs.table.Resolve(name) }
@@ -304,7 +207,7 @@ func (h *dutHost) Value(name string) (expr.Value, int64, bool) {
 	return h.d.procs.table.Value(name)
 }
 func (h *dutHost) Step(ev procedure.StepEvent) {
-	n := h.run.n
+	n := h.n
 	h.d.dutJob(func(l *loop) {
 		if di := l.insts[dutName].dut; di != nil {
 			recordStep(l, di.step, n, ev)
@@ -475,12 +378,12 @@ func (a *dutAdapter) MonitorState(name string) (string, bool) {
 // ask makes a request of the control plane for the action under way, and
 // waits for its answer.
 func (a *dutAdapter) ask(ctx context.Context, req *request, what string) error {
-	run := a.d.dutCur.Load()
-	if run == nil {
+	info, ok := secondary.ActionInfoFrom(ctx)
+	if !ok {
 		return procedure.Failf(procedure.Fail, "no action is under way")
 	}
 	req.internal = true
-	req.who = caller{name: run.who.name, role: roleOperate, via: record.ViaAction}
+	req.who = caller{name: info.By.Name, role: roleOperate, via: record.ViaAction}
 	req.reply = make(chan reply, 1)
 	select {
 	case a.d.reqs <- req:
@@ -551,25 +454,6 @@ func (d *daemon) dutOn(w http.ResponseWriter) bool {
 	return true
 }
 
-// dutState guards what the HTTP side and an action's goroutine read of the
-// DUT rack outside the loop.
-type dutState struct {
-	mu  sync.Mutex
-	cur *dutRun
-}
-
-func (s *dutState) Load() *dutRun {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.cur
-}
-
-func (s *dutState) Store(r *dutRun) {
-	s.mu.Lock()
-	s.cur = r
-	s.mu.Unlock()
-}
-
 // dutContract is GET /dut/contract: which contract this DUT rack runs, and
 // the rack's provenance, for a master to compare with its own copy before it
 // relies on anything the rack says (handoff §4.6).
@@ -578,13 +462,7 @@ func (d *daemon) dutContract(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
-		"protocol":        peer.Protocol,
-		"contract":        d.contract.Name,
-		"sha256":          d.contract.Hash,
-		"resource_sha256": d.contract.ResourceHash,
-		"provenance":      d.provenance,
-	})
+	json.NewEncoder(w).Encode(d.dutCore.Info(d.provenance))
 }
 
 // clock is GET /clock: the daemon's clock, in Unix nanoseconds, read as late

@@ -539,12 +539,12 @@ The kit is held to this repository's implementations: `secondary.Server`, `ktest
 | `peer` | a master: `Client`, `Link`, `View`, `DUT`, `Guard` (§6–§9) | done; `ktestd -peer` runs on it |
 | `monitor` | a secondary: contract loader and evaluator (§3, §5); how actions are defined is a hook, `ActionCheck` | done |
 | `conformance` | checking either side from the outside; `cmd/peer-conformance` (§12) | done |
-| `secondary` | a secondary: `Server`, over the host's streams and an `Actions` it runs (§5–§7, §10); `LoadTokens` and `SelfSigned`, as `ktestd` does them; the record layouts of §7.4 and the `/stream/sub` filter, which `ktestd -contract` shares | done |
+| `secondary` | a secondary: `Core`, a DUT rack's behaviour under any control plane (`ktestd -contract` runs on it); `Server`, `Core` with a control plane, recording and HTTP of its own, over the host's streams and an `Actions` it runs (§5–§7, §10); `LoadTokens` and `SelfSigned`, as `ktestd` does them; the record layouts of §7.4 and the `/stream/sub` filter, which `ktestd -contract` shares | done |
 | `procedure/lib` | a master's procedures: the DUT keywords over one rack (`AddDUT`) or several (`AddDUTs`, §9.7) | done |
 
 A program that is a DUT rack declares its streams with `record.Schema`, gives `secondary.New` the contract, its streams, an `Actions` and an `Auth` (`secondary.LoadTokens` reads `ktestd`'s tokens file), serves `Server.Handler` over TLS (`secondary.SelfSigned` makes a certificate), and writes its records with `Server.Write`. The server's reorder window (`Config.Window`, 20 ms by default) must exceed the longest the program takes between a record's time and writing it; a later record is a gap. `examples/library-rack` is one, in under 300 lines.
 
-`ktestd -contract` keeps its own event loop, which it shares with its bus and instruments, and so is not built on `secondary.Server`; both are held to the same layouts, the same evaluator and the same conformance checks.
+`secondary` is in two layers. `Core` is a DUT rack's behaviour: the contract, the live monitors with their watermark and gaps, and the modes and actions with their entry actions, settling, timeouts, stops, outcomes and records. Its host gives it a `Writer` for its records and a `Do` that runs work on the host's goroutine, and puts a control plane in front of it — who may ask, the lease, arming, request numbers, and recording each decision. `Server` is `Core` with a small control plane, a recording and an HTTP interface of its own. `ktestd -contract` is `Core` with `ktestd`'s control plane, the one its bus and instruments share, and its actions are Robot keywords that act through that plane. A DUT rack's behaviour therefore exists once; the two control planes are held to the same conformance checks.
 
 ## 15. Open points
 

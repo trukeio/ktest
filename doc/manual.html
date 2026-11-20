@@ -1122,7 +1122,7 @@ $ ktestd -https :8443 -tokens tokens -panel rack.json -psu psu1=192.168.1.20:502
 <thead><tr><th>Go package</th><th>For</th></tr></thead>
 <tbody>
 <tr><td><code>peer</code></td><td>a master: the connection with its contract check, lease and clock (<code>Link</code>), what the DUT rack streamed (<code>View</code>), the DUT operations (<code>DUT</code>) and the protection rules' verdict (<code>Guard</code>). <code>ktestd -peer</code> runs on it</td></tr>
-<tr><td><code>secondary</code></td><td>a DUT rack: <code>Server</code> loads the contract against the program's own streams, evaluates the monitors, records, and serves the REST interface and the subscription; the program writes its records and runs its actions. <code>LoadTokens</code> and <code>SelfSigned</code> do access as <code>ktestd</code> does</td></tr>
+<tr><td><code>secondary</code></td><td>a DUT rack: <code>Core</code> is its behaviour, under any control plane, and <code>ktestd -contract</code> runs on it; <code>Server</code> loads the contract against the program's own streams, evaluates the monitors, records, and serves the REST interface and the subscription; the program writes its records and runs its actions. <code>LoadTokens</code> and <code>SelfSigned</code> do access as <code>ktestd</code> does</td></tr>
 <tr><td><code>contract</code>, <code>expr</code>, <code>monitor</code></td><td>the contract file, the expression language and the evaluator, shared by both sides</td></tr>
 <tr><td><code>conformance</code></td><td>the checks behind <code>peer-conformance</code></td></tr>
 </tbody>
@@ -1161,7 +1161,8 @@ $ ktestd -https :8443 -tokens tokens -panel rack.json -psu psu1=192.168.1.20:502
 <tr><td></td><td>Locked mode</td><td><span class="st built">built</span></td></tr>
 <tr><td></td><td>The peer protocol as a specification; libraries for either side (<code>peer</code>, <code>secondary</code>); the conformance kit</td><td><span class="st built">built</span></td></tr>
 <tr><td></td><td>One lab rack driving several DUT racks</td><td><span class="st built">built</span></td></tr>
-<tr><td></td><td><code>ktestd -contract</code> on <code>secondary.Server</code>; an NDJSON subscription; one DUT rack running several contracts</td><td><span class="st proposed">proposed</span></td></tr>
+<tr><td></td><td><code>ktestd -contract</code> on <code>secondary.Core</code>, the DUT rack's behaviour every DUT rack built on the library shares</td><td><span class="st built">built</span></td></tr>
+<tr><td></td><td>An NDJSON subscription; one DUT rack running several contracts</td><td><span class="st proposed">proposed</span></td></tr>
 <tr><td></td><td>Replay in the rack; packaging as a service; more instrument kinds and dialects by configuration; USBTMC</td><td><span class="st planned">planned</span></td></tr>
 <tr><td></td><td>Several buses; LIN; ISO-TP; J1939</td><td><span class="st planned">planned</span></td></tr>
 <tr><td></td><td>The agent tool server</td><td><span class="st proposed">proposed</span></td></tr>

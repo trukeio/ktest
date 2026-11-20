@@ -1574,10 +1574,11 @@ opinion rather than the same answer arrived at cheaply.
    checks either side from outside, and `logbcheck -faults` holds a lab
    rack's protection to the faults it was put through; `ktestd` passes both.
    One lab rack drives several DUT racks (`-peer` once for each, `dut=` on
-   the DUT keywords, rules over any rack; `examples/two-duts`). Not done:
-   `ktestd -contract` keeps its own loop rather than running on
-   `secondary.Server`, so the two DUT racks share layouts, evaluator and
-   checks but not their request handling.
+   the DUT keywords, rules over any rack; `examples/two-duts`).
+   `ktestd -contract` runs on `secondary.Core`, the DUT rack's behaviour
+   that `secondary.Server` also runs on: contract, monitors, modes and
+   actions exist once. What differs is the control plane in front of it:
+   `ktestd`'s is the one its bus and instruments share.
 
 The failure mode to avoid is five things at 70%. Build one specific configuration
 end to end before generalising anything; the generality extracted from two working
