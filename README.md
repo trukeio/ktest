@@ -107,6 +107,9 @@ hardware is needed:
 - [examples/two-racks](examples/two-racks/README.md) runs a lab rack and a DUT
   rack against a simulated DUT: the DUT rack's monitors live, and the lab rack
   removing the stress when it loses them or the DUT asks.
+- [examples/library-rack](examples/library-rack/README.md) is a DUT rack that is
+  not ktestd: a program of its own on package `secondary`, driven by the same
+  lab rack (doc/peer-protocol.md).
 
 ```sh
 examples/supply-bench/demo.sh

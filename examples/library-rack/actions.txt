@@ -1,0 +1,8 @@
+The actions of library-rack's DUT, implemented in Go in main.go (dutRack.Run).
+The contract names this file, and both racks hash it: a change to what an
+action does is a change to this file, and so to the contract.
+
+enter_active   Nothing: the simulated DUT is always active while it runs.
+leave_active   Nothing.
+reset          Sends the DUT a reset, and ends once it is running again, or
+               fails a second after.
