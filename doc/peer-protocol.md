@@ -505,5 +505,9 @@ From a sample arriving to the resulting transition being on the wire SHOULD take
 | `contract` | either side: the contract file read strictly, its hashes and names (§3) | done |
 | `expr` | either side: the language of §4 | done |
 | `peer` | a master: `Client`, `Link`, `View`, `DUT`, `Guard` (§6–§9) | done; `ktestd -peer` runs on it |
-| `monitor` | a secondary: contract loader and evaluator, §3 and §5 | exists; still imports `procedure` for actions |
-| *new* secondary server | a secondary: §6 and §7 over a host's own samples and action callbacks | to be extracted from `cmd/ktestd` |
+| `monitor` | a secondary: contract loader and evaluator (§3, §5); how actions are defined is a hook, `ActionCheck` | done |
+| `secondary` | a secondary: `Server`, over the host's streams and an `Actions` it runs (§5–§7, §10); the record layouts of §7.4 and the `/stream/sub` filter, which `ktestd -contract` shares | done |
+
+A program that is a DUT rack declares its streams with `record.Schema`, gives `secondary.New` the contract, its streams, an `Actions` and an `Auth`, serves `Server.Handler` over TLS, and writes its records with `Server.Write`. The server's reorder window (`Config.Window`, 20 ms by default) must exceed the longest the program takes between a record's time and writing it; a later record is a gap.
+
+`ktestd -contract` keeps its own event loop, which it shares with its bus and instruments, and so is not built on `secondary.Server`; both are held to the same layouts and the same evaluator, and `monitor-check -live` checks either's recording.

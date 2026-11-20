@@ -214,6 +214,12 @@ func (c *Client) Arm(ctx context.Context, lease string) error {
 	return c.do(ctx, "POST", "/dut/arm", nil, lease, nil)
 }
 
+// Disarm disarms the DUT: the action under way ends, and the DUT rack stops
+// what a disarm stops. It needs no lease and only the view role (§6.4).
+func (c *Client) Disarm(ctx context.Context) error {
+	return c.do(ctx, "POST", "/dut/disarm", nil, "", nil)
+}
+
 // SetMode asks for a mode, "" for none, and returns the request's number. The
 // DUT rack answers once it has accepted it; the mode is applied when its entry
 // action ends, which its mode stream says.
