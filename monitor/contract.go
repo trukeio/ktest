@@ -36,12 +36,13 @@ import (
 	"time"
 
 	"github.com/trukeio/ktest/channel"
+	"github.com/trukeio/ktest/contract"
 	"github.com/trukeio/ktest/expr"
 	"github.com/trukeio/ktest/procedure"
 )
 
 // SchemaVersion is the contract schema this package reads.
-const SchemaVersion = 1
+const SchemaVersion = contract.SchemaVersion
 
 // Channels resolves the channel names a contract's inputs give.
 type Channels interface {
@@ -125,37 +126,6 @@ type nameRef struct {
 	ref     channel.Ref
 }
 
-type contractFile struct {
-	Contract string                     `json:"contract"`
-	Schema   int                        `json:"schema"`
-	Inputs   map[string]json.RawMessage `json:"inputs"`
-	Monitors map[string]monitorFile     `json:"monitors"`
-	Modes    map[string]modeFile        `json:"modes"`
-	Resource string                     `json:"resource"`
-	Actions  map[string]string          `json:"actions"`
-	Enums    map[string][]string        `json:"enums"`
-	Timeouts map[string]string          `json:"timeouts"`
-}
-
-type monitorFile struct {
-	OK       string   `json:"ok"`
-	Debounce string   `json:"debounce"`
-	Modes    []string `json:"modes"`
-}
-
-type modeFile struct {
-	Action string `json:"action"`
-	Settle string `json:"settle"`
-}
-
-// inputFile is an input written as an object, for what a channel name alone
-// cannot say: "Alive": {"channel": "DutStatus", "max_age": "50ms"}.
-type inputFile struct {
-	Channel string `json:"channel"`
-	MaxAge  string `json:"max_age"`
-	Enum    string `json:"enum"`
-}
-
 var ident = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // Load reads and checks a contract against the channels it will be evaluated
@@ -175,26 +145,16 @@ func Load(path string, ch Channels) (*Contract, error) {
 }
 
 func parse(path string, raw []byte, ch Channels) (*Contract, error) {
-	var f contractFile
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&f); err != nil {
+	f, err := contract.Parse(raw)
+	if err != nil {
 		return nil, err
 	}
-	if dec.More() {
-		return nil, fmt.Errorf("there is more after the contract's closing brace")
-	}
-	sum := sha256.Sum256(raw)
-	c := &Contract{Name: f.Contract, Path: path, Hash: hex.EncodeToString(sum[:]),
+	c := &Contract{Name: f.Contract, Path: path, Hash: contract.Hash(raw),
 		Inputs: map[string]*Input{}, Monitors: map[string]*Monitor{}, Modes: map[string]*Mode{},
 		Resource: f.Resource, Actions: map[string]string{}, Enums: map[string]*expr.EnumType{},
 		Timeouts: map[string]time.Duration{}, names: map[string]nameRef{}}
 
 	switch {
-	case f.Contract == "":
-		return nil, fmt.Errorf(`"contract" is required: the contract's name, which both racks record`)
-	case f.Schema != SchemaVersion:
-		return nil, fmt.Errorf(`"schema" is %d, and this reads schema %d`, f.Schema, SchemaVersion)
 	case len(f.Monitors) == 0:
 		return nil, fmt.Errorf(`a contract with no "monitors" would watch nothing`)
 	case len(f.Inputs) == 0:
@@ -307,7 +267,7 @@ func (c *Contract) input(alias string, raw json.RawMessage, ch Channels) (*Input
 	if !ident.MatchString(alias) {
 		return nil, fmt.Errorf("input %q: a name is a letter, then letters, digits or _", alias)
 	}
-	var f inputFile
+	var f contract.InputObject
 	if err := json.Unmarshal(raw, &f.Channel); err != nil {
 		dec := json.NewDecoder(bytes.NewReader(raw))
 		dec.DisallowUnknownFields()
@@ -346,22 +306,7 @@ func (c *Contract) input(alias string, raw json.RawMessage, ch Channels) (*Input
 }
 
 // duration reads a duration as expressions write one, "20ms".
-func duration(s string, zero bool) (time.Duration, error) {
-	if s == "" {
-		if zero {
-			return 0, nil
-		}
-		return 0, fmt.Errorf("a duration is required, such as 500ms")
-	}
-	v, u, err := expr.ParseQuantity(s)
-	if err != nil || !u.SameDimension(expr.ParseUnit("s")) {
-		return 0, fmt.Errorf("%q is not a duration, such as 500ms", s)
-	}
-	if v < 0 || v == 0 && !zero {
-		return 0, fmt.Errorf("%s: a duration here is longer than zero", s)
-	}
-	return time.Duration(v*1e9 + 0.5), nil
-}
+func duration(s string, zero bool) (time.Duration, error) { return contract.Duration(s, zero) }
 
 // Resolve types an expression's names: monitors, read as true while ok, and
 // the inputs' channels, Alias or Alias.field.

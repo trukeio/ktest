@@ -232,6 +232,7 @@ import (
 
 	"github.com/trukeio/ktest/can"
 	"github.com/trukeio/ktest/channel"
+	"github.com/trukeio/ktest/contract"
 	"github.com/trukeio/ktest/monitor"
 	"github.com/trukeio/ktest/peer"
 	"github.com/trukeio/ktest/procedure/lib"
@@ -457,13 +458,13 @@ func main() {
 		for _, s := range scopes {
 			insts[s.name] = true
 		}
-		var id *monitor.Identity
+		var id *contract.Identity
 		var pcfg peer.Config
 		if *peerFlag != "" {
 			if pcfg, err = peer.ParseConfig(*peerFlag); err != nil {
 				fatalf("-peer: %v", err)
 			}
-			if id, err = monitor.Identify(pcfg.Contract); err != nil {
+			if id, err = contract.Identify(pcfg.Contract); err != nil {
 				fatalf("-peer: %v", err)
 			}
 		}
@@ -881,7 +882,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "ktestd: contract %s (sha256 %.12s…), %d monitors live, window %v, watermark every %v\n",
 			dm.c.Name, dm.c.Hash, len(dm.c.Order), *monWindow, *watermark)
 	}
-	var peerEvents <-chan peerEvent
+	var peerEvents <-chan peer.Event
 	if pl != nil {
 		if err := pl.declare(w, time.Now()); err != nil {
 			fatalf("%v", err)
@@ -891,15 +892,16 @@ func main() {
 		d.procs.contract = pl.id.Hash
 		// The master's DUT keywords, checked against the contract's names
 		// when a procedure loads.
-		lib.AddDUT(d.procs.lib, &rackAdapter{p: d.procs}, &dutPeer{v: pl.view, c: pl.c, id: pl.id, lease: &pl.lease,
-			judged: func(j judgement) {
+		lib.AddDUT(d.procs.lib, &rackAdapter{p: d.procs}, &dutPeer{&peer.DUT{View: pl.view, Client: pl.c,
+			Contract: pl.id, Lease: pl.driver.Lease,
+			OnJudgement: func(j peer.Judgement) {
 				t := time.Now()
 				d.dutJob(func(l *loop) {
 					if err := pl.writeJudgement(l.w, t, j); err != nil {
 						fatalf("write: %v", err)
 					}
 				})
-			}})
+			}}})
 		pctx, pstop := context.WithCancel(context.Background())
 		defer pstop()
 		go pl.run(pctx)
@@ -1337,7 +1339,7 @@ type loop struct {
 
 	mon        *dutMon   // -contract: the live monitors; nil without
 	peer       *peerLink // -peer: the DUT rack; nil without
-	peerEvents <-chan peerEvent
+	peerEvents <-chan peer.Event
 }
 
 // run is the loop. It returns how many sent frames were never handed back.

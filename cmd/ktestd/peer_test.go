@@ -9,14 +9,15 @@ import (
 
 	"github.com/trukeio/logb"
 
-	"github.com/trukeio/ktest/monitor"
+	"github.com/trukeio/ktest/contract"
+	"github.com/trukeio/ktest/peer"
 	"github.com/trukeio/ktest/record"
 )
 
 // The rules are refused, with a sentence, wherever they would do nothing or
 // something doubtful.
 func TestCheckRules(t *testing.T) {
-	id := &monitor.Identity{Name: "c", Monitors: []string{"abort", "alive"}}
+	id := &contract.Identity{Name: "c", Monitors: []string{"abort", "alive"}}
 	insts := map[string]bool{"vcan1": true, "psu1": true}
 	parse := func(js string) *rules {
 		t.Helper()
@@ -88,7 +89,7 @@ func TestMirrorSchema(t *testing.T) {
 	b := &logb.Batch{Schema: m, Count: 1, Data: rec}
 	for name, want := range map[string]any{"peer_t": int64(1_763_000_000_123_456_789), "restated": true,
 		"flag": true, "state": uint64(3)} {
-		f := fieldNamed(m, name)
+		f := peer.Field(m, name)
 		got, err := b.Raw(0, f)
 		if err != nil || got != want {
 			t.Errorf("%s: %v (%T), %v; want %v", name, got, got, err, want)

@@ -9,8 +9,9 @@ import (
 	"time"
 
 	"github.com/trukeio/ktest/channel"
+	"github.com/trukeio/ktest/contract"
 	"github.com/trukeio/ktest/expr"
-	"github.com/trukeio/ktest/monitor"
+	"github.com/trukeio/ktest/peer"
 	"github.com/trukeio/ktest/procedure"
 	"github.com/trukeio/ktest/procedure/lib"
 )
@@ -241,13 +242,13 @@ func TestTwoRacksProceduresLoad(t *testing.T) {
 		table.Stream(chanSchema("psu1", ch))
 		table.Stream(measSchema("psu1", ch))
 	}
-	id, err := monitor.Identify("../../examples/two-racks/dut/dut-interface.json")
+	id, err := contract.Identify("../../examples/two-racks/dut/dut-interface.json")
 	if err != nil {
 		t.Fatal(err)
 	}
 	d := &daemon{supplies: map[string]int{"psu1": 2}}
 	p := newProcs(d, "../../examples/two-racks/lab/procedures", table)
-	dp := &dutPeer{v: newPeerView(), id: id}
+	dp := &dutPeer{&peer.DUT{View: peer.NewView(), Contract: id}}
 	lib.AddDUT(p.lib, &rackAdapter{p: p}, dp)
 	for file, tests := range map[string]string{"sweep.robot": "Sweep,Threshold", "hold.robot": "Hold"} {
 		s, err := procedure.Load(p.dir+"/"+file, procedure.Env{Lib: p.lib, Channels: table})

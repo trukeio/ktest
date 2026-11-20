@@ -9,13 +9,11 @@ import (
 	"maps"
 	"slices"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/trukeio/logb"
 
-	"github.com/trukeio/ktest/channel"
-	"github.com/trukeio/ktest/monitor"
+	"github.com/trukeio/ktest/contract"
 	"github.com/trukeio/ktest/peer"
 	"github.com/trukeio/ktest/procedure"
 	"github.com/trukeio/ktest/record"
@@ -82,7 +80,7 @@ const (
 // without a peer, a peer without monitoring_lost, an action other than
 // remove_stress, an instrument this daemon does not have, a monitor the
 // contract lacks.
-func checkRules(r *rules, havePeer bool, insts map[string]bool, id *monitor.Identity) error {
+func checkRules(r *rules, havePeer bool, insts map[string]bool, id *contract.Identity) error {
 	if r == nil {
 		if havePeer {
 			return errors.New(`-peer needs "rules": {"monitoring_lost": ...} in limits.json: ` +
@@ -120,19 +118,24 @@ func checkRules(r *rules, havePeer bool, insts map[string]bool, id *monitor.Iden
 	return nil
 }
 
-// peerEvent is what the driver hands the loop.
-type peerEvent struct {
-	item  *peer.Item
-	link  *linkEvent
-	clock *peer.Estimate
-}
-
 // The events of <peer>.link.
 const (
 	linkUp      = 1
 	linkDown    = 2
 	linkRefused = 3 // the DUT rack answered, and refused: a lease, or a contract that is not the master's
 )
+
+// linkCode is a link event's code in <peer>.link: a lease refused is a
+// refusal, as a contract refused is, though the link stands.
+func linkCode(k peer.LinkKind) byte {
+	switch k {
+	case peer.LinkUp:
+		return linkUp
+	case peer.LinkDown:
+		return linkDown
+	}
+	return linkRefused
+}
 
 type linkEvent struct {
 	event byte
@@ -142,24 +145,20 @@ type linkEvent struct {
 // peerLink is the loop's side of the peer.
 type peerLink struct {
 	c      *peer.Client
-	id     *monitor.Identity
+	id     *contract.Identity
 	rules  *rules
-	events chan peerEvent
+	events chan peer.Event
+	driver *peer.Link
+	guard  peer.Guard
 
 	link, clock, ruleSt, judgeSt *teeStream
 	mirrors                      map[string]*mirror
 
-	// view is the DUT as the procedures' keywords see it, and lease the
-	// DUT's lease as the driver holds it, nil while it holds none.
-	view  *peerView
-	lease atomic.Pointer[string]
+	// view is the DUT as the rules and the procedures' keywords see it.
+	view *peer.View
 
 	connected bool
 	lastLink  linkEvent // the last link record, so that a retry failing as the last did is not recorded again
-	offset    *peer.Estimate
-	wmPeer    int64     // the last watermark, the DUT rack's clock; 0 for none
-	wmRecv    time.Time // when it arrived
-	abort     string    // the abort monitor's state as last mirrored
 	holds     map[string]bool
 }
 
@@ -262,15 +261,15 @@ func judgementSchema(name string) *logb.Schema {
 		"clock": "userspace: this rack's clock when the judgement was made"})
 }
 
-func (p *peerLink) writeJudgement(w *tee, t time.Time, j judgement) error {
+func (p *peerLink) writeJudgement(w *tee, t time.Time, j peer.Judgement) error {
 	return w.Write(t, p.judgeSt, func(rec []byte) {
-		rec[jgKind] = j.kind
-		putUint64(rec[jgFrom:], uint64(j.from))
-		putUint64(rec[jgTo:], uint64(j.to))
-		putUint64(rec[jgOffset:], uint64(j.offset))
-		putUint64(rec[jgUnc:], uint64(j.unc))
-		putStr(rec, jgMonitors, 64, strings.Join(j.monitors, ","))
-		putStr(rec, jgResult, 96, j.result)
+		rec[jgKind] = byte(j.Kind)
+		putUint64(rec[jgFrom:], uint64(j.From))
+		putUint64(rec[jgTo:], uint64(j.To))
+		putUint64(rec[jgOffset:], uint64(j.Offset))
+		putUint64(rec[jgUnc:], uint64(j.Uncertainty))
+		putStr(rec, jgMonitors, 64, strings.Join(j.Monitors, ","))
+		putStr(rec, jgResult, 96, j.Result)
 	})
 }
 
@@ -304,7 +303,7 @@ func mirrorSchema(name string, from *logb.Schema) (*logb.Schema, error) {
 // are compared, since a changed resource changes what an action does under
 // an unchanged contract.
 func newPeerLink(cfg peer.Config, r *rules, meta map[string]string) (*peerLink, error) {
-	id, err := monitor.Identify(cfg.Contract)
+	id, err := contract.Identify(cfg.Contract)
 	if err != nil {
 		return nil, err
 	}
@@ -319,7 +318,7 @@ func newPeerLink(cfg peer.Config, r *rules, meta map[string]string) (*peerLink, 
 		return nil, fmt.Errorf("%s at %s: the DUT rack must answer at start, so that its contract can be checked: %v",
 			cfg.Name, cfg.URL, err)
 	}
-	if err := sameContract(id, info); err != nil {
+	if err := peer.Matches(id, info); err != nil {
 		return nil, fmt.Errorf("%s at %s: %v", cfg.Name, cfg.URL, err)
 	}
 	p := cfg.Name
@@ -332,24 +331,16 @@ func newPeerLink(cfg peer.Config, r *rules, meta map[string]string) (*peerLink, 
 			meta["peer."+p+".provenance."+k] = v
 		}
 	}
-	return &peerLink{c: c, id: id, rules: r, events: make(chan peerEvent, 1024), mirrors: map[string]*mirror{},
-		holds: map[string]bool{ruleLost: true}, view: newPeerView()}, nil
-}
-
-func sameContract(id *monitor.Identity, info peer.Info) error {
-	if err := info.Supported(); err != nil {
-		return err
+	pl := &peerLink{c: c, id: id, rules: r, events: make(chan peer.Event, 1024), mirrors: map[string]*mirror{},
+		holds: map[string]bool{ruleLost: true}, view: peer.NewView(),
+		driver: &peer.Link{Client: c, Contract: id}}
+	if r != nil {
+		pl.guard.WatermarkAge = time.Duration(r.MonitoringLost.WatermarkAge)
+		if r.DutAbort != nil {
+			pl.guard.Abort = r.DutAbort.Monitor
+		}
 	}
-	switch {
-	case info.Hash != id.Hash:
-		return fmt.Errorf("it runs contract %s, sha256 %.12s…, and this rack's copy, %s, is %s, sha256 %.12s…",
-			info.Contract, info.Hash, id.Path, id.Name, id.Hash)
-	case info.ResourceHash != id.ResourceHash:
-		return fmt.Errorf("its contract's resource has sha256 %.12s…, and this rack's copy has %.12s…: "+
-			"the actions would not be the ones this rack's procedures were checked against",
-			info.ResourceHash, id.ResourceHash)
-	}
-	return nil
+	return pl, nil
 }
 
 // declare lays out the peer's streams and the rules', so that a reader meets
@@ -399,178 +390,47 @@ func (p *peerLink) writeRule(w *tee, t time.Time, seq uint32, ev byte, rule, msg
 	})
 }
 
-// The streams the master mirrors: every monitor, the mode, every action.
-var mirrored = []string{"mon.*", "mode", "dut.action.*"}
-
-// run is the driver: connected, or trying to be, until ctx ends. Each
-// connection checks the contract again, since the DUT rack may have been
-// restarted with another.
+// run is the driver, connected or trying to be until ctx ends: package
+// peer's Link, handing what happens to the loop.
 func (p *peerLink) run(ctx context.Context) {
-	send := func(e peerEvent) bool {
+	p.driver.Run(ctx, func(e peer.Event) bool {
 		select {
 		case p.events <- e:
 			return true
 		case <-ctx.Done():
 			return false
 		}
-	}
-	go p.clockLoop(ctx, send)
-	for ctx.Err() == nil {
-		err := p.session(ctx, send)
-		if ctx.Err() != nil {
-			return
-		}
-		ev := byte(linkDown)
-		var re *peer.RefusedError
-		var ce contractError
-		if errors.As(err, &re) || errors.As(err, &ce) {
-			ev = linkRefused
-		}
-		if !send(peerEvent{link: &linkEvent{ev, err.Error()}}) {
-			return
-		}
-		select {
-		case <-time.After(500 * time.Millisecond):
-		case <-ctx.Done():
-			return
-		}
-	}
-}
-
-type contractError struct{ error }
-
-// session is one connection: the contract checked, the lease taken, the
-// subscription read until it fails. The lease is renewed meanwhile, and a
-// lease refused is said and does not end the session: the monitors protect
-// whether or not this rack may change the DUT's mode.
-func (p *peerLink) session(ctx context.Context, send func(peerEvent) bool) error {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	info, err := p.c.Info(ctx)
-	if err != nil {
-		return err
-	}
-	if err := sameContract(p.id, info); err != nil {
-		return contractError{err}
-	}
-	s, err := p.c.Subscribe(ctx, mirrored)
-	if err != nil {
-		return err
-	}
-	defer s.Close()
-	go p.leaseLoop(ctx, send)
-	if !send(peerEvent{link: &linkEvent{linkUp, fmt.Sprintf("contract %s, sha256 %.12s…", info.Contract, info.Hash)}}) {
-		return ctx.Err()
-	}
-	for {
-		it, err := s.Next()
-		if err != nil {
-			return err
-		}
-		if !send(peerEvent{item: &it}) {
-			return ctx.Err()
-		}
-	}
-}
-
-func (p *peerLink) leaseLoop(ctx context.Context, send func(peerEvent) bool) {
-	const ttl = 30 * time.Second
-	token := ""
-	defer p.lease.Store(nil)
-	for {
-		var err error
-		if token == "" {
-			// Taken, then armed: holding the DUT's lease is this rack's
-			// intent to change its mode and run its actions.
-			if token, err = p.c.Lease(ctx, "", ttl); err == nil {
-				if err = p.c.Arm(ctx, token); err != nil {
-					token = ""
-				}
-			}
-		} else if err = p.c.Renew(ctx, token); err != nil {
-			token = ""
-		}
-		if token != "" {
-			t := token
-			p.lease.Store(&t)
-		} else {
-			p.lease.Store(nil)
-		}
-		if err != nil && ctx.Err() == nil {
-			send(peerEvent{link: &linkEvent{linkRefused, "the DUT's lease: " + err.Error()}})
-		}
-		select {
-		case <-time.After(ttl / 3):
-		case <-ctx.Done():
-			if token != "" {
-				rctx, cancel := context.WithTimeout(context.Background(), time.Second)
-				p.c.Release(rctx, token)
-				cancel()
-			}
-			return
-		}
-	}
-}
-
-func (p *peerLink) clockLoop(ctx context.Context, send func(peerEvent) bool) {
-	var o peer.Offsets
-	tick := time.NewTicker(time.Second)
-	defer tick.Stop()
-	for {
-		if s, err := p.c.Clock(ctx); err == nil {
-			e := o.Add(s)
-			if !send(peerEvent{clock: &e}) {
-				return
-			}
-		}
-		select {
-		case <-tick.C:
-		case <-ctx.Done():
-			return
-		}
-	}
+	})
 }
 
 // peerEvent handles what the driver handed over, on the loop.
-func (l *loop) peerEvent(e peerEvent) {
+func (l *loop) peerEvent(e peer.Event) {
 	p := l.peer
 	t := time.Now()
 	switch {
-	case e.link != nil:
-		switch e.link.event {
-		case linkUp:
-			p.connected = true
-		case linkDown:
-			p.connected = false
-			p.wmPeer = 0
-		case linkRefused:
-			if strings.HasPrefix(e.link.msg, "the DUT's lease") {
-				break // the subscription stands
-			}
-			p.connected = false
-			p.wmPeer = 0
-		}
-		p.view.link(p.connected)
-		if *e.link == p.lastLink {
+	case e.Link != nil:
+		p.view.Apply(e)
+		p.connected = p.view.Connected()
+		le := linkEvent{linkCode(e.Link.Kind), e.Link.Msg}
+		if le == p.lastLink {
 			break // the driver retrying, and failing as it did: nothing new to say
 		}
-		p.lastLink = *e.link
-		if err := p.writeLink(l.w, t, e.link.event, e.link.msg); err != nil {
+		p.lastLink = le
+		if err := p.writeLink(l.w, t, le.event, le.msg); err != nil {
 			fatalf("write: %v", err)
 		}
-	case e.clock != nil:
-		p.offset = e.clock
-		p.view.clock(e.clock)
-		err := l.w.Write(e.clock.At, p.clock, func(rec []byte) {
-			putUint64(rec[ckOffset:], uint64(e.clock.Offset))
-			putUint64(rec[ckUnc:], uint64(e.clock.Uncertainty))
-			putUint64(rec[ckRTT:], uint64(e.clock.RTT))
+	case e.Clock != nil:
+		p.view.Apply(e)
+		err := l.w.Write(e.Clock.At, p.clock, func(rec []byte) {
+			putUint64(rec[ckOffset:], uint64(e.Clock.Offset))
+			putUint64(rec[ckUnc:], uint64(e.Clock.Uncertainty))
+			putUint64(rec[ckRTT:], uint64(e.Clock.RTT))
 		})
 		if err != nil {
 			fatalf("write: %v", err)
 		}
-	case e.item != nil:
-		l.mirror(e.item)
+	case e.Item != nil:
+		l.mirror(e.Item)
 	}
 	l.evalRules(t)
 }
@@ -611,40 +471,7 @@ func (l *loop) mirror(it *peer.Item) {
 	if err != nil {
 		fatalf("write: %v", err)
 	}
-	p.view.observe(it)
-	switch {
-	case name == "mon.watermark":
-		if it.PeerT > p.wmPeer {
-			p.wmPeer, p.wmRecv = it.PeerT, it.Recv
-		}
-	case p.rules.DutAbort != nil && name == "mon."+p.rules.DutAbort.Monitor:
-		if f := fieldNamed(it.Schema, "state"); f >= 0 {
-			p.abort = channel.Decode(it.Schema, it.Rec, f).Str
-		}
-	}
-}
-
-func fieldNamed(s *logb.Schema, name string) int {
-	for i := range s.Fields {
-		if s.Fields[i].Name == name {
-			return i
-		}
-	}
-	return -1
-}
-
-// watermarkAge is how old the DUT rack's watermark is by this rack's clock:
-// its time less the clocks' offset once there is an estimate, and when it
-// arrived before.
-func (p *peerLink) watermarkAge(t time.Time) (time.Duration, bool) {
-	if p.wmPeer == 0 {
-		return 0, false
-	}
-	at := p.wmRecv
-	if p.offset != nil {
-		at = time.Unix(0, p.wmPeer-int64(p.offset.Offset))
-	}
-	return t.Sub(at), true
+	p.view.Observe(it)
 }
 
 // evalRules decides, on the loop, whether a rule holds, and removes the
@@ -655,20 +482,10 @@ func (l *loop) evalRules(t time.Time) {
 	if p == nil || p.rules == nil {
 		return
 	}
-	lost, why := false, ""
-	switch age, ok := p.watermarkAge(t); {
-	case !p.connected:
-		lost, why = true, "the DUT rack is not connected"
-	case !ok:
-		lost, why = true, "the DUT rack has sent no watermark yet"
-	case age > time.Duration(p.rules.MonitoringLost.WatermarkAge):
-		lost, why = true, fmt.Sprintf("the DUT rack's watermark is %v old, beyond %v",
-			age.Round(time.Microsecond), time.Duration(p.rules.MonitoringLost.WatermarkAge))
-	}
-	l.rule(t, ruleLost, lost, why)
-	if a := p.rules.DutAbort; a != nil {
-		l.rule(t, ruleAbort, p.connected && p.abort == string(monitor.Dev),
-			fmt.Sprintf("the DUT rack's monitor %s is dev", a.Monitor))
+	v := p.guard.Check(p.view, t)
+	l.rule(t, ruleLost, v.MonitoringLost, v.LostWhy)
+	if p.rules.DutAbort != nil {
+		l.rule(t, ruleAbort, v.DUTAbort, v.AbortWhy)
 	}
 }
 

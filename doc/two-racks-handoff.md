@@ -578,7 +578,7 @@ For M5 and M7, three things this milestone found:
   - `<peer>.link` records the link, `<peer>.clock` the offset, and `rules` each rule taking hold and clearing.
 - **The rules** are a `rules` section in `limits.json`, evaluated on every mirrored record and every 10 ms. A rule's decisions are recorded as request 15, a disarm with the outputs off.
 - **Other changes:**
-  - `monitor.Identify`: a contract's names and hashes, for a rack that does not evaluate it.
+  - `contract.Identify` (formerly `monitor.Identify`): a contract's names and hashes, for a rack that does not evaluate it.
   - `dutsim` sends `DutSupply.Voltage`, so that a DUT rack can watch the DUT's supply, which belongs to the lab rack.
   - `examples/two-racks`.
 - **Tests:**
@@ -602,7 +602,7 @@ For M5 and M7, three things this milestone found:
 - **A lost link is lost monitoring at once.** `monitoring_lost` holds while the subscription is down, as well as while the watermark is old. A killed rack is noticed in milliseconds rather than after `watermark_age`.
 - **A rule is level-triggered, with the first time special.** When it takes hold, every listed instrument is disarmed with its outputs off, armed or not, since an output can be on with nobody holding the lease. While it holds, any listed instrument that is armed is disarmed again: arming is accepted and then undone, under the rule's number. Nothing fires at start, before the first connection, unless something is armed, so a lab rack started before its DUT rack leaves its outputs as they are.
 - **`-peer` requires `rules.monitoring_lost`, and rules require `-peer`.** A lab rack that stressed a DUT nobody was watching would protect nothing, and rules about no peer would do nothing. `dut_abort` is optional, and its monitor must be in the contract.
-- **The lab rack checks the contract by its identity only** (`monitor.Identify`): names and hashes, as strictly decoded as `Load`. It cannot compile the monitors, since their channels are the DUT rack's. Both hashes, contract and resource, must match, and they are checked again on every reconnection.
+- **The lab rack checks the contract by its identity only** (`contract.Identify`): names and hashes, as strictly decoded as `Load`. It cannot compile the monitors, since their channels are the DUT rack's. Both hashes, contract and resource, must match, and they are checked again on every reconnection.
 - **A mirrored record's time is when this rack received it,** and `peer_t` holds the DUT rack's own time. One clock per stream keeps the recording in order. `peer_t` minus the recorded offset puts a record on this rack's clock, which is what M7's windows will do.
 - **Mirrored names:** `dut.mon.watermark` rather than §4.6's `dut.watermark`, so that every mirror is the peer's name and the DUT rack's stream name. `dut.connected` is `dut.link.connected`.
 - **Held states at join arrive with the next segment.** logb restates held values when a segment begins, so a lab rack joining mid-segment learns each monitor's state within a second, or from its next record if that comes first. That restatement is mirrored once, flagged `restated`.

@@ -1,11 +1,20 @@
-// Package peer is the master's driver for a DUT rack (handoff §4.6): a
-// conversation with another ktestd over its REST interface and its
-// subscription stream, as package psu is a conversation with a supply.
+// Package peer is a master's side of the Ktest peer protocol
+// (doc/peer-protocol.md): a test application driving a DUT rack, whether
+// that application is ktestd or not.
 //
-// It holds no policy. It says what the DUT rack's contract is, takes and
-// renews a lease, estimates the offset between the two clocks, and hands
-// over each record the DUT rack streams with both racks' times. What a stale
-// watermark or a monitor in dev means is the daemon's to decide.
+//	Client  one DUT rack's REST interface and subscription stream (§6, §7)
+//	Link    the connection kept up: protocol and contract checked, the lease
+//	        held and armed, the clock sampled, events handed over (§8, §9.1–9.3)
+//	View    what the DUT rack streamed: monitor states, watermark, mode,
+//	        actions' ends, link and clock offset
+//	DUT     the operations on the DUT: set a mode, run an action, judge a
+//	        window, wait for all ok (§6.5, §6.6, §9.5)
+//	Guard   whether the protection rules every master must have hold (§9.4)
+//
+// A master runs a Link, records each Event it hands over, feeds it to a View
+// with Apply, and calls Guard.Check after each and at least every 10 ms. It
+// holds no policy: what to do when a rule holds — remove the stress — and
+// how to record it are the master's.
 package peer
 
 import (

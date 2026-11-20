@@ -1,4 +1,4 @@
-package monitor
+package contract
 
 import (
 	"crypto/sha256"
@@ -44,3 +44,41 @@ func TestIdentify(t *testing.T) {
 		t.Errorf("a misspelt key: %v", err)
 	}
 }
+
+func TestHas(t *testing.T) {
+	id := &Identity{Name: "c", Monitors: []string{"abort", "alive"}, Modes: []string{"active"}}
+	if err := id.Has("monitor", "alive"); err != nil {
+		t.Error(err)
+	}
+	if err := id.Has("mode", "sleep"); err == nil || !strings.Contains(err.Error(), "active") {
+		t.Errorf("an undeclared mode: %v", err)
+	}
+	if err := id.Has("action", "x"); err == nil || !strings.Contains(err.Error(), "none") {
+		t.Errorf("a contract with no actions: %v", err)
+	}
+}
+
+const example = `{
+  "contract": "acme-bcm-v3",
+  "schema": 1,
+  "inputs":   {"Vx": "psu1.ch1.meas.v", "Speed": "EngineData.EngineSpeed", "Alive": "DutStatus"},
+  "monitors": {
+    "vx":    {"ok": "Vx > 1.0V"},
+    "speed": {"ok": "abs(Speed - 3000) <= 30", "debounce": "20ms", "modes": ["active"]},
+    "alive": {"ok": "age(Alive) < 30ms and delta(Alive.counter, 16) == 1"},
+    "abort": {"ok": "Vx < 16V"},
+    "ready": {"ok": "vx and speed and alive"}
+  },
+  "modes":    {"active": {"action": "enter_active", "settle": "500ms"}},
+  "resource": "actions.robot",
+  "actions":  {"enter_active": "Enter Active", "recover": "Recover"},
+  "enums":    {"class": ["A", "B", "C", "D", "E"]},
+  "timeouts": {"ready": "10s", "recover": "5s"}
+}`
+
+const actions = `*** Keywords ***
+Enter Active
+    Log    active
+Recover
+    Log    recover
+`

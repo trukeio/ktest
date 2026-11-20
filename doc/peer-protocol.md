@@ -498,11 +498,12 @@ From a sample arriving to the resulting transition being on the wire SHOULD take
 | §4.4 window limit | fixed per call site in package `expr` |
 | §10.4 latency | measured with `cmd/sublat` |
 
-## 14. Go libraries (planned)
+## 14. Go libraries
 
 | Package | For | Status |
 |---|---|---|
-| `peer` | a master: contract check, lease, mode, actions, clock estimate, subscription reader | exists; to be stabilised |
-| `expr` | either side: the language of §4 | exists |
-| `monitor` | a secondary: contract loader and evaluator, §3 and §5 | exists; to be decoupled from `procedure` |
+| `contract` | either side: the contract file read strictly, its hashes and names (§3) | done |
+| `expr` | either side: the language of §4 | done |
+| `peer` | a master: `Client`, `Link`, `View`, `DUT`, `Guard` (§6–§9) | done; `ktestd -peer` runs on it |
+| `monitor` | a secondary: contract loader and evaluator, §3 and §5 | exists; still imports `procedure` for actions |
 | *new* secondary server | a secondary: §6 and §7 over a host's own samples and action callbacks | to be extracted from `cmd/ktestd` |
