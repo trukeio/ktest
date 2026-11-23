@@ -495,7 +495,7 @@ An absent field is left out of `v`. JSON readers commonly hold every number as a
 ### 7.9 Equivalence
 
 - A secondary that serves both encodings MUST carry the same messages in each: the same metadata, schemas, holds and records, value for value and to the nanosecond. Only the order of messages of different streams within one instant MAY differ.
-- Decoding either encoding and writing the result in the other MUST give back the same messages. This is what lets a master record the stream in whatever format it records in (§9.6), and what a conformance check of the two encodings would hold a secondary to (§12; not yet in the kit).
+- Decoding either encoding and writing the result in the other MUST give back the same messages. This is what lets a master record the stream in whatever format it records in (§9.6), and what the conformance kit holds a secondary that serves both to (§12).
 - The secondary's own recording (§10.2) is in a format of its choosing; neither encoding has to be it.
 
 ## 8. Clocks
@@ -610,7 +610,7 @@ peer-conformance secondary -url https://host:port -cacert rack.pem -contract dut
     -token operate.token [-other operate2.token] [-view view.token] [-mode m] [-action a]
 ```
 
-It acts as a master and checks §2 (tokens and roles), §3.3 (hashes), §5.1 and §5.6 (state codes, the watermark's order and cadence), §6 (every endpoint, every refusal and its status and number, the lease, arming, a mode entered and left, an action run and a second refused while it runs, each with its records under its number, and a lease that runs out stopping nothing), §7 (the stream's Logb encoding, its metadata and the streams of §7.4 with their layouts of §7.7) and §11. It does not yet check the NDJSON encoding (§7.8) or the equivalence of the two (§7.9). It measures §10.4's latency through the clocks' offset and reports it, without judging it. It takes the lease, arms, changes the mode and disarms: run it on a bench, never during a test. `-action` runs an action on the DUT, twice; without it, none is run. Give one that takes some time, such as a reset, or the busy check is skipped.
+It acts as a master and checks §2 (tokens and roles), §3.3 (hashes), §5.1 and §5.6 (state codes, the watermark's order and cadence), §6 (every endpoint, every refusal and its status and number, the lease, arming, a mode entered and left, an action run and a second refused while it runs, each with its records under its number, and a lease that runs out stopping nothing), §7 (the stream's Logb encoding, its metadata and the streams of §7.4 with their layouts of §7.7; the choice of encoding by `Accept`, a `406` for one not served; and, when the secondary serves NDJSON, its lines, the order of its messages, its wide integers and labels (§7.5, §7.8), and a Logb and an NDJSON subscription read side by side carrying the same metadata, schemas and records, to the nanosecond (§7.9)) and §11. A secondary that answers NDJSON with `406` passes, its NDJSON checks skipped. It measures §10.4's latency through the clocks' offset and reports it, without judging it. It takes the lease, arms, changes the mode and disarms: run it on a bench, never during a test. `-action` runs an action on the DUT, twice; without it, none is run. Give one that takes some time, such as a reset, or the busy check is skipped.
 
 The monitors' semantics (§5) are checked on the secondary's recording: `monitor-check -live dut-interface.json recording.logb` replays it through the reference evaluator, which must give every transition the secondary recorded live, to the nanosecond, up to the first record a gap lost. Gaps themselves (§5.7) cannot be provoked from outside a rack; they are covered by the reference evaluator's own tests, and by `monitor-check` on any recording that has one.
 
@@ -620,7 +620,7 @@ The monitors' semantics (§5) are checked on the secondary's recording: `monitor
 peer-conformance master [-addr 127.0.0.1:8446] [-dir conformance] [-phase 3s]
 ```
 
-It runs a reference secondary, prints the settings for the master to connect to it, and puts the master through each fault in turn, with a quiet phase after each: `abort` going `dev`; the rack frozen, its watermark stopped; the link lost; the rack coming back with another contract; and with another protocol version. It checks what a secondary can see (§8 clock sampling, §9.1 the contract asked for before anything proceeds, and nothing proceeding against another contract or version, §9.2 lease renewal, §9.3 the contract asked for again on every reconnection, §9.4 a subscription that includes the abort monitor).
+It runs a reference secondary, prints the settings for the master to connect to it, and puts the master through each fault in turn, with a quiet phase after each: `abort` going `dev`; the rack frozen, its watermark stopped; the link lost; the rack coming back with another contract; and with another protocol version. It checks what a secondary can see (§8 clock sampling, §9.1 the contract asked for before anything proceeds, and nothing proceeding against another contract or version, §9.2 lease renewal, §9.3 the contract asked for again on every reconnection, §9.4 a subscription that includes the abort monitor). The reference secondary serves both encodings; the encoding the master asks for is reported (§7.1), not judged.
 
 What the master does about each fault (§9.4: removing the stress) happens in its own world, so the run writes `faults.json` beside the master's settings: each fault's kind, start and end, by the reference rack's clock. The master's own recording must show, for each fault, its rule (`dut_abort` for an abort, `monitoring_lost` for the rest) taking hold soon after the start — for a frozen rack, within the watermark age — holding, and clearing after the end. For `ktestd`, `logbcheck -faults faults.json master.logb /dev/null` checks exactly that, putting the fault times on the master's clock through the offset it recorded; another master checks its own recording against the same file.
 
@@ -641,7 +641,7 @@ The kit is held to this repository's implementations: `secondary.Server`, `ktest
 | §4.4 window limit | fixed per call site in package `expr` |
 | §10.4 latency | 2.8 ms at the 99th percentile on loopback, by `peer-conformance`; also `cmd/sublat` |
 | §9.7 several racks | `-peer` once for each; DUT keywords take `dut=`; rules hold for any rack and name it |
-| §12 conformance | 43 of 43 secondary checks; 10 of 10 master checks; `logbcheck -faults` holds its rules to the faults |
+| §12 conformance | 43 of 43 secondary checks before the encoding checks were added; the 11 encoding checks not yet run against `ktestd -contract`, which shares their code with `secondary.Server`, which passes all 54; 10 of 10 master checks; `logbcheck -faults` holds its rules to the faults |
 
 ## 14. Go libraries
 
@@ -662,7 +662,6 @@ A program that is a DUT rack declares its streams with `record.Schema`, gives `s
 
 ## 15. Open points
 
-- Conformance checks for NDJSON (§7.8) and for the equivalence of the two encodings (§7.9). The repository's own implementations are held to §7.9 by tests (`ndjson`, `peer`, `secondary`), not yet by `peer-conformance`.
 - Protocol 2: NDJSON required of every secondary, Logb optional, so that a rack or a master in any language needs only a JSON library. A master that records in Logb would still ask for Logb where it is served, and mirror it by copy.
 - `monitor-check` reads Logb recordings. Reading an NDJSON capture of a subscription to every input would let it replay a rack that does not record in Logb (§5.5, §10.2).
 - Monitors written as state machines rather than expressions, for devices that need one.

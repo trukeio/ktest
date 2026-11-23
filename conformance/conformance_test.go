@@ -10,7 +10,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -169,6 +171,12 @@ func TestMasterConforms(t *testing.T) {
 	if testing.Short() {
 		t.Skip("a run through every phase takes some seconds")
 	}
+	for _, enc := range []string{peer.EncodingLogb, peer.EncodingNDJSON} {
+		t.Run(enc, func(t *testing.T) { testMasterConforms(t, enc) })
+	}
+}
+
+func testMasterConforms(t *testing.T, enc string) {
 	dir := t.TempDir()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
@@ -183,7 +191,8 @@ func TestMasterConforms(t *testing.T) {
 	}()
 	u := <-ready
 	cfg, err := peer.ParseConfig("ref=" + u + ",token=" + filepath.Join(dir, "master.token") +
-		",cacert=" + filepath.Join(dir, "cert.pem") + ",contract=" + filepath.Join(dir, "dut-interface.json"))
+		",cacert=" + filepath.Join(dir, "cert.pem") + ",contract=" + filepath.Join(dir, "dut-interface.json") +
+		",encoding=" + enc)
 	must(t, err)
 	c, err := peer.New(cfg)
 	must(t, err)
@@ -200,6 +209,12 @@ func TestMasterConforms(t *testing.T) {
 	rep.Write(&b)
 	if rep.Failed() != 0 {
 		t.Fatalf("package peer's master does not conform:\n%s", b.String())
+	}
+	wantEnc := map[string]string{peer.EncodingLogb: "application/vnd.logb", peer.EncodingNDJSON: "application/x-ndjson"}[enc]
+	for _, x := range rep.Results {
+		if x.Title == "the master reads the stream as" && !strings.HasPrefix(x.Detail, wantEnc) {
+			t.Errorf("reported %q, want %s", x.Detail, wantEnc)
+		}
 	}
 	for _, x := range rep.Results {
 		if x.Status == Skip {
@@ -265,5 +280,125 @@ func TestMasterBroken(t *testing.T) {
 		if !failed[want] {
 			t.Errorf("not caught: %s\n%s", want, b.String())
 		}
+	}
+}
+
+// secondaryFailures runs the secondary checks against a rack served
+// through wrap, and returns the titles that failed and those skipped.
+func secondaryFailures(t *testing.T, wrap func(http.Handler) http.Handler) (failed, skipped map[string]bool, report string) {
+	t.Helper()
+	r := newRack(t, wrap)
+	defer r.stop()
+	rep, err := CheckSecondary(context.Background(), r.config())
+	must(t, err)
+	var b bytes.Buffer
+	rep.Write(&b)
+	failed, skipped = map[string]bool{}, map[string]bool{}
+	for _, x := range rep.Results {
+		switch x.Status {
+		case Fail:
+			failed[x.Title] = true
+		case Skip:
+			skipped[x.Title] = true
+		}
+	}
+	return failed, skipped, b.String()
+}
+
+// onNDJSON serves next, but passes every line of an NDJSON subscription
+// through edit.
+func onNDJSON(edit func(line []byte) []byte) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			if req.URL.Path == "/stream/sub" && strings.Contains(req.Header.Get("Accept"), "ndjson") {
+				w = &editWriter{ResponseWriter: w, edit: edit}
+			}
+			next.ServeHTTP(w, req)
+		})
+	}
+}
+
+// editWriter edits what is written to it a line at a time; the encoder
+// writes each line with one Write.
+type editWriter struct {
+	http.ResponseWriter
+	edit func([]byte) []byte
+}
+
+func (w *editWriter) Write(b []byte) (int, error) {
+	if _, err := w.ResponseWriter.Write(w.edit(b)); err != nil {
+		return 0, err
+	}
+	return len(b), nil
+}
+
+func (w *editWriter) Flush() { w.ResponseWriter.(http.Flusher).Flush() }
+
+// An NDJSON encoder that writes t as a JSON number: exact here, but not in
+// a reader that holds numbers as binary64 once a run passes 2^53 ns.
+func TestSecondaryNDJSONNumericTime(t *testing.T) {
+	re := regexp.MustCompile(`"t":"(-?[0-9]+)"`)
+	failed, _, rep := secondaryFailures(t, onNDJSON(func(l []byte) []byte { return re.ReplaceAll(l, []byte(`"t":$1`)) }))
+	want := "integers wider than 53 bits, t among them, are decimal strings; labelled enums are labels"
+	if !failed[want] || len(failed) != 1 {
+		t.Errorf("want exactly %q to fail:\n%s", want, rep)
+	}
+}
+
+// An NDJSON encoder that loses a monitor's records: the stream reads, but
+// is not the Logb one.
+func TestSecondaryNDJSONLosesRecords(t *testing.T) {
+	var mu sync.Mutex
+	n := 0
+	failed, _, rep := secondaryFailures(t, onNDJSON(func(l []byte) []byte {
+		if !bytes.HasPrefix(l, []byte(`{"rec":"mon.watermark"`)) {
+			return l
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if n++; n%5 == 0 {
+			return nil // every fifth watermark
+		}
+		return l
+	}))
+	want := "the records are the same in both encodings, to the nanosecond"
+	if !failed[want] || len(failed) != 1 {
+		t.Errorf("want exactly %q to fail:\n%s", want, rep)
+	}
+}
+
+// A rack from before NDJSON, that ignores Accept: Logb for everyone.
+func TestSecondaryIgnoresAccept(t *testing.T) {
+	failed, skipped, rep := secondaryFailures(t, func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			req.Header.Del("Accept")
+			next.ServeHTTP(w, req)
+		})
+	})
+	for _, want := range []string{"a subscription in an encoding it does not serve is refused 406",
+		"the stream is served as NDJSON (SHOULD)"} {
+		if !failed[want] {
+			t.Errorf("not caught: %s\n%s", want, rep)
+		}
+	}
+	if len(failed) != 2 || len(skipped) != len(ndjsonTitles) {
+		t.Errorf("%d failures and %d skips, want 2 and %d:\n%s", len(failed), len(skipped), len(ndjsonTitles), rep)
+	}
+}
+
+// A rack that serves Logb only, and says so: it conforms, the NDJSON checks
+// skipped.
+func TestSecondaryLogbOnly(t *testing.T) {
+	failed, skipped, rep := secondaryFailures(t, func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			if req.URL.Path == "/stream/sub" && strings.Contains(req.Header.Get("Accept"), "ndjson") {
+				http.Error(w, "Logb only", http.StatusNotAcceptable)
+				return
+			}
+			next.ServeHTTP(w, req)
+		})
+	})
+	if len(failed) != 0 || len(skipped) != len(ndjsonTitles) {
+		t.Errorf("%d failures and %d skips, want none and %d:\n%s", len(failed), len(skipped), len(ndjsonTitles), rep)
 	}
 }

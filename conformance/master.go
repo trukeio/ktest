@@ -25,6 +25,7 @@ import (
 	"github.com/trukeio/ktest/peer"
 	"github.com/trukeio/ktest/record"
 	"github.com/trukeio/ktest/secondary"
+	"github.com/trukeio/ktest/stream"
 )
 
 // MasterConfig is the reference DUT rack a master is checked against.
@@ -132,6 +133,7 @@ type request struct {
 	query  string
 	status int
 	body   map[string]any // a lease request's
+	accept string         // a subscription's Accept
 }
 
 func (m *masterRun) setUp() error {
@@ -225,7 +227,8 @@ func (m *masterRun) generate() {
 // observe logs every request the master makes, and carries out the faults.
 func (m *masterRun) observe(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		req := request{at: time.Now(), method: r.Method, path: r.URL.Path, query: r.URL.RawQuery}
+		req := request{at: time.Now(), method: r.Method, path: r.URL.Path, query: r.URL.RawQuery,
+			accept: strings.Join(r.Header.Values("Accept"), ", ")}
 		if r.URL.Path == "/dut/lease" && r.Method == "POST" {
 			// Read for the ttl asked for, and handed on as it was.
 			var body map[string]any
@@ -405,6 +408,7 @@ func (m *masterRun) run(ctx context.Context) {
 		m.r.pass("§9.1", "it asks for the contract before it subscribes or takes the lease", "")
 	}
 	m.checkSubscription(log)
+	m.checkEncoding(log)
 
 	// Steady: §8, §6.3.
 	steady := time.Now()
@@ -538,6 +542,14 @@ func (m *masterRun) checkSubscription(log []request) {
 		}
 	}
 	m.r.fail("§9.4", "the master subscribes to the abort monitor", "ch=%s", strings.Join(globs, ","))
+}
+
+// §7.1: the encoding the master asked for. Either is the master's choice;
+// the reference rack serves both, so it is reported, not judged.
+func (m *masterRun) checkEncoding(log []request) {
+	i := first(log, isSub)
+	enc := stream.Negotiate([]string{log[i].accept})
+	m.r.info("§7.1", "the master reads the stream as", "%s (Accept: %q)", enc, log[i].accept)
 }
 
 // §8: the clock is sampled at least once a second.

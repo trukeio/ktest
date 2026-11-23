@@ -107,6 +107,7 @@ func (c *secChecker) run(ctx context.Context) {
 	defer c.sub.Close()
 	c.watermark()
 	c.badGlob(ctx)
+	c.encodings(ctx)
 	lease := c.lease(ctx)
 	if lease == "" {
 		return
