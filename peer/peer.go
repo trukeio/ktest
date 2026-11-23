@@ -42,7 +42,16 @@ type Config struct {
 	Token    string // a file holding the token the master presents
 	CACert   string // the DUT rack's certificate, PEM
 	Contract string // the master's copy of the contract
+	// Encoding is how the subscription is asked for (doc/peer-protocol.md
+	// §7.1): "logb", the default, or "ndjson". Both give the same Items.
+	Encoding string
 }
+
+// The encodings a subscription can be read in.
+const (
+	EncodingLogb   = "logb"
+	EncodingNDJSON = "ndjson"
+)
 
 var peerName = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]*$`)
 
@@ -73,8 +82,13 @@ func ParseConfig(s string) (Config, error) {
 			c.CACert = v
 		case "contract":
 			c.Contract = v
+		case "encoding":
+			if v != EncodingLogb && v != EncodingNDJSON {
+				return Config{}, fmt.Errorf("encoding=%s: the stream is read as logb or ndjson", v)
+			}
+			c.Encoding = v
 		default:
-			return Config{}, fmt.Errorf("%q is not a peer setting: token, cacert, contract", k)
+			return Config{}, fmt.Errorf("%q is not a peer setting: token, cacert, contract, encoding", k)
 		}
 	}
 	switch {

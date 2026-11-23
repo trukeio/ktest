@@ -292,7 +292,7 @@ func main() {
 	)
 	flag.Var(&supplies, "psu", "a bench supply to drive, SCPI over TCP: name=host:port[,channels]; repeatable")
 	flag.Var(&peerFlags, "peer", "a DUT rack to drive, as a master: "+
-		"name=https://host:port,token=file,cacert=file,contract=dut-interface.json; once for each rack")
+		"name=https://host:port,token=file,cacert=file,contract=dut-interface.json[,encoding=ndjson]; once for each rack")
 	flag.Var(&scopes, "scope", "an oscilloscope to drive, SCPI over TCP: name=host:port[,channels][,full=ch1+ch2];\n"+
 		"\tfull names the channels whose every sample goes into the recording, and every channel gets the envelope; repeatable")
 	flag.Usage = usage

@@ -3,7 +3,12 @@ package stream
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strconv"
+	"strings"
+
+	"github.com/trukeio/ktest/ndjson"
 )
 
 // ContentType is what a Logb stream is served as. It is not registered with
@@ -44,10 +49,20 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) { h.ServeStreams
 
 // ServeStreams is ServeHTTP for a consumer sent only the streams keep accepts,
 // by name: see SubscribeStreams.
+//
+// The consumer's Accept header chooses the encoding (doc/peer-protocol.md
+// §7.1): Logb, the frames as they are, or NDJSON, the same frames transcoded
+// message by message as they arrive. A consumer that accepts neither is
+// refused 406.
 func (h *Hub) ServeStreams(w http.ResponseWriter, r *http.Request, keep func(stream string) bool) {
 	fl, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "the server cannot stream to this connection", http.StatusInternalServerError)
+		return
+	}
+	enc := Negotiate(r.Header.Values("Accept"))
+	if enc == "" {
+		http.Error(w, "this stream is served as "+ContentType+" or "+ndjson.MediaType, http.StatusNotAcceptable)
 		return
 	}
 
@@ -60,7 +75,8 @@ func (h *Hub) ServeStreams(w http.ResponseWriter, r *http.Request, keep func(str
 	}
 
 	// No Content-Length, so the response is chunked and open-ended.
-	w.Header().Set("Content-Type", ContentType)
+	w.Header().Set("Content-Type", enc)
+	w.Header().Add("Vary", "Accept")
 	w.Header().Set("Cache-Control", "no-store")
 	// A reverse proxy will buffer a chunked response into uselessness unless
 	// told not to (§6.1). This is the header nginx honours; others need their
@@ -72,6 +88,23 @@ func (h *Hub) ServeStreams(w http.ResponseWriter, r *http.Request, keep func(str
 	sub := h.SubscribeStreams(0, keep)
 	defer sub.Cancel()
 
+	// For NDJSON the chunks go through a pipe to a transcoder, which writes
+	// and flushes a line per message. The pipe has no buffer, so a slow
+	// consumer still stalls the write below, and the Hub still sees it.
+	out := io.Writer(w)
+	if enc == ndjson.MediaType {
+		pr, pw := io.Pipe()
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			nw := ndjson.NewWriter(w)
+			nw.Flush = fl.Flush
+			pr.CloseWithError(ndjson.Transcode(nw, pr))
+		}()
+		defer func() { pw.Close(); <-done }()
+		out = pw
+	}
+
 	ctx := r.Context()
 	for {
 		select {
@@ -79,7 +112,7 @@ func (h *Hub) ServeStreams(w http.ResponseWriter, r *http.Request, keep func(str
 			if !ok {
 				return
 			}
-			_, err := w.Write(b)
+			_, err := out.Write(b)
 			// Released whether or not the write succeeded: on failure this
 			// consumer is going away, and holding its allowance would only
 			// make the Hub disconnect it for a reason that is not true.
@@ -87,11 +120,78 @@ func (h *Hub) ServeStreams(w http.ResponseWriter, r *http.Request, keep func(str
 			if err != nil {
 				return
 			}
-			fl.Flush()
+			if out == w {
+				fl.Flush()
+			}
 		case <-ctx.Done():
 			return
 		}
 	}
+}
+
+// Negotiate is the encoding an Accept header asks for, among Logb and NDJSON
+// (doc/peer-protocol.md §7.1), or "" if it accepts neither.
+//
+// The higher q wins. At equal q a type named outright beats one a wildcard
+// matches, so "application/x-ndjson, */*" is NDJSON; then Logb, the default.
+// No Accept at all is Logb, so every client written before NDJSON existed
+// gets what it always got.
+func Negotiate(accept []string) string {
+	offered := []string{ContentType, ndjson.MediaType}
+	type score struct {
+		q    float64
+		spec int // 0 none, 1 */*, 2 type/*, 3 the type itself
+	}
+	best := map[string]score{}
+	named := false
+	for _, line := range accept {
+		for _, part := range strings.Split(line, ",") {
+			mt, params, _ := strings.Cut(strings.TrimSpace(part), ";")
+			mt = strings.ToLower(strings.TrimSpace(mt))
+			if mt == "" {
+				continue
+			}
+			named = true
+			q := 1.0
+			for _, p := range strings.Split(params, ";") {
+				k, v, ok := strings.Cut(strings.TrimSpace(p), "=")
+				if ok && strings.EqualFold(strings.TrimSpace(k), "q") {
+					if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
+						q = f
+					}
+				}
+			}
+			for _, o := range offered {
+				spec := 0
+				switch {
+				case mt == o:
+					spec = 3
+				case mt == "*/*":
+					spec = 1
+				case strings.HasSuffix(mt, "/*") && strings.HasPrefix(o, strings.TrimSuffix(mt, "*")):
+					spec = 2
+				}
+				// The most specific range that matches a type sets its q.
+				if spec > 0 && spec > best[o].spec {
+					best[o] = score{q, spec}
+				}
+			}
+		}
+	}
+	if !named {
+		return ContentType
+	}
+	pick, top := "", score{}
+	for _, o := range offered {
+		s, ok := best[o]
+		if !ok || s.q <= 0 {
+			continue
+		}
+		if pick == "" || s.q > top.q || (s.q == top.q && s.spec > top.spec) {
+			pick, top = o, s
+		}
+	}
+	return pick
 }
 
 // StatusHandler reports the fan-out's accounting as JSON.

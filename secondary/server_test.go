@@ -92,7 +92,16 @@ func (h *host) run(t *testing.T) {
 
 func (h *host) setVolts(v float64) { h.volts.Store(math.Float64bits(v)) }
 
+// TestMasterDrivesSecondary runs a master against a Server over TLS, once
+// reading the subscription as Logb and once as NDJSON (§7.1): the master's
+// view, its judgements and its guard must not depend on the encoding.
 func TestMasterDrivesSecondary(t *testing.T) {
+	for _, enc := range []string{peer.EncodingLogb, peer.EncodingNDJSON} {
+		t.Run(enc, func(t *testing.T) { testMasterDrivesSecondary(t, enc) })
+	}
+}
+
+func testMasterDrivesSecondary(t *testing.T, enc string) {
 	dir := t.TempDir()
 	cp := filepath.Join(dir, "dut-interface.json")
 	must(t, os.WriteFile(cp, []byte(testContract), 0o644))
@@ -141,7 +150,7 @@ func TestMasterDrivesSecondary(t *testing.T) {
 	must(t, os.WriteFile(filepath.Join(mdir, "actions.txt"), []byte("enter\nrecover\nbroken\n"), 0o644))
 	id, err := contract.Identify(mcp)
 	must(t, err)
-	c := client(t, ts, "m-token", mcp)
+	c := client(t, ts, "m-token", mcp, ",encoding="+enc)
 	link := &peer.Link{Client: c, Contract: id}
 	view := peer.NewView()
 	lctx, lcancel := context.WithCancel(context.Background())
@@ -237,14 +246,14 @@ func TestMasterDrivesSecondary(t *testing.T) {
 	}
 }
 
-func client(t *testing.T, ts *httptest.Server, token, contractPath string) *peer.Client {
+func client(t *testing.T, ts *httptest.Server, token, contractPath string, settings ...string) *peer.Client {
 	t.Helper()
 	dir := t.TempDir()
 	cert := filepath.Join(dir, "rack.pem")
 	must(t, os.WriteFile(cert, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: ts.Certificate().Raw}), 0o644))
 	tok := filepath.Join(dir, "token")
 	must(t, os.WriteFile(tok, []byte(token), 0o600))
-	cfg, err := peer.ParseConfig("dut=" + ts.URL + ",token=" + tok + ",cacert=" + cert + ",contract=" + contractPath)
+	cfg, err := peer.ParseConfig("dut=" + ts.URL + ",token=" + tok + ",cacert=" + cert + ",contract=" + contractPath + strings.Join(settings, ""))
 	must(t, err)
 	c, err := peer.New(cfg)
 	must(t, err)

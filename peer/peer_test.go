@@ -24,7 +24,10 @@ import (
 )
 
 // rack serves h over TLS and returns a client for it.
-func rack(t *testing.T, h http.Handler) *Client {
+func rack(t *testing.T, h http.Handler) *Client { t.Helper(); return rackWith(t, h, "") }
+
+// rackWith is rack with more settings for the client, ",key=value…".
+func rackWith(t *testing.T, h http.Handler, settings string) *Client {
 	t.Helper()
 	srv := httptest.NewTLSServer(h)
 	t.Cleanup(srv.Close)
@@ -38,7 +41,7 @@ func rack(t *testing.T, h http.Handler) *Client {
 	if err := os.WriteFile(tok, []byte("secret\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := ParseConfig("dut=" + srv.URL + ",token=" + tok + ",cacert=" + cert + ",contract=c.json")
+	cfg, err := ParseConfig("dut=" + srv.URL + ",token=" + tok + ",cacert=" + cert + ",contract=c.json" + settings)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +153,14 @@ func TestProtocol(t *testing.T) {
 // The subscription, against a real recorder writing a live stream into a
 // real hub: the state of a held stream as the next segment restates it, then
 // each record as written, each on the DUT rack's clock to the nanosecond.
+// The same in either encoding (§7.9).
 func TestSubscribe(t *testing.T) {
+	for _, enc := range []string{EncodingLogb, EncodingNDJSON} {
+		t.Run(enc, func(t *testing.T) { testSubscribe(t, enc) })
+	}
+}
+
+func testSubscribe(t *testing.T, enc string) {
 	hub := stream.New()
 	t0 := time.Unix(1_763_000_000, 0)
 	now := t0
@@ -174,12 +184,12 @@ func TestSubscribe(t *testing.T) {
 	}
 	write(10*time.Millisecond, 1, "dev") // before anyone listens
 
-	c := rack(t, http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+	c := rackWith(t, http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
 		if got := req.URL.Query().Get("ch"); got != "mon.*" {
 			t.Errorf("ch=%q", got)
 		}
 		hub.ServeStreams(rw, req, func(name string) bool { return strings.HasPrefix(name, "mon.") })
-	}))
+	}), ",encoding="+enc)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	s, err := c.Subscribe(ctx, []string{"mon.*"})
@@ -207,7 +217,10 @@ func TestSubscribe(t *testing.T) {
 		if it.Schema.Name != "mon.alive" {
 			t.Fatalf("stream %s", it.Schema.Name)
 		}
-		items = append(items, got{time.Duration(it.PeerT - t0.UnixNano()), it.Rec[8], it.Restated})
+		items = append(items, got{time.Duration(it.PeerT - t0.UnixNano()), byte(Num(&it, "state")), it.Restated})
+		if c := Str(&it, "cause"); !it.Restated && c != map[byte]string{0: "ok", 1: "dev"}[byte(Num(&it, "state"))] {
+			t.Errorf("cause %q", c)
+		}
 	}
 	want := []got{{10 * time.Millisecond, 1, true}, {120 * time.Millisecond, 0, false}, {131 * time.Millisecond, 1, false}}
 	if fmt.Sprint(items) != fmt.Sprint(want) {

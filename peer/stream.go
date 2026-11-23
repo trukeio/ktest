@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/trukeio/logb"
+
+	"github.com/trukeio/ktest/ndjson"
 )
 
 // Item is one record the DUT rack streamed, with both racks' times.
@@ -32,10 +34,12 @@ type Item struct {
 	Restated bool
 }
 
-// Stream is a subscription to a DUT rack.
+// Stream is a subscription to a DUT rack, in either encoding: r reads Logb,
+// nd NDJSON, and the other is nil.
 type Stream struct {
 	body  io.ReadCloser
 	r     *logb.Reader
+	nd    *ndjson.Reader
 	epoch int64
 	queue []Item
 	seen  map[string]bool // streams with a record already handed over
@@ -50,6 +54,12 @@ func (c *Client) Subscribe(ctx context.Context, globs []string) (*Stream, error)
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
+	nd := c.cfg.Encoding == EncodingNDJSON
+	if nd {
+		req.Header.Set("Accept", ndjson.MediaType)
+	} else {
+		req.Header.Set("Accept", "application/vnd.logb")
+	}
 	resp, err := c.long.Do(req)
 	if err != nil {
 		return nil, err
@@ -57,9 +67,17 @@ func (c *Client) Subscribe(ctx context.Context, globs []string) (*Stream, error)
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		resp.Body.Close()
-		return nil, &RefusedError{Status: resp.StatusCode, Msg: strings.TrimSpace(string(b))}
+		msg := strings.TrimSpace(string(b))
+		if resp.StatusCode == http.StatusNotAcceptable && nd {
+			msg = "the DUT rack does not serve its stream as NDJSON (§7.1); read it as Logb: " + msg
+		}
+		return nil, &RefusedError{Status: resp.StatusCode, Msg: msg}
 	}
 	s := &Stream{body: resp.Body, epoch: -1, seen: map[string]bool{}}
+	if nd {
+		s.nd = ndjson.NewReader(resp.Body)
+		return s, nil
+	}
 	s.r, err = logb.NewReader(resp.Body)
 	if err != nil {
 		resp.Body.Close()
@@ -73,10 +91,18 @@ func (c *Client) Subscribe(ctx context.Context, globs []string) (*Stream, error)
 func (s *Stream) Close() error { return s.body.Close() }
 
 // Meta is the stream's metadata as read so far: the DUT rack's provenance.
-func (s *Stream) Meta() []logb.Meta { return s.r.Meta }
+func (s *Stream) Meta() []logb.Meta {
+	if s.nd != nil {
+		return s.nd.Meta
+	}
+	return s.r.Meta
+}
 
 // Next is the next record, blocking until there is one or the stream ends.
 func (s *Stream) Next() (Item, error) {
+	if s.nd != nil {
+		return s.nextNDJSON()
+	}
 	for len(s.queue) == 0 {
 		b, err := s.r.Next()
 		if err != nil {
@@ -107,11 +133,39 @@ func (s *Stream) Next() (Item, error) {
 	return it, nil
 }
 
+// nextNDJSON is Next for an NDJSON subscription: the same Items, built from
+// lines. A hold is handed over as a Logb restatement is, once per stream and
+// only before its first record.
+func (s *Stream) nextNDJSON() (Item, error) {
+	for {
+		m, err := s.nd.Next()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				err = io.ErrUnexpectedEOF // a subscription never ends of its own accord
+			}
+			return Item{}, err
+		}
+		if m.Kind != ndjson.KindHold && m.Kind != ndjson.KindRecord {
+			continue
+		}
+		if err := s.needEpoch(); err != nil {
+			return Item{}, err
+		}
+		name := m.Schema.Name
+		if m.Kind == ndjson.KindHold && s.seen[name] {
+			continue
+		}
+		s.seen[name] = true
+		return Item{Schema: m.Schema, Rec: m.Rec, PeerT: s.epoch + m.T, Recv: time.Now(),
+			Restated: m.Kind == ndjson.KindHold}, nil
+	}
+}
+
 func (s *Stream) needEpoch() error {
 	if s.epoch >= 0 {
 		return nil
 	}
-	for _, kv := range s.r.Meta {
+	for _, kv := range s.Meta() {
 		if kv.Key == "peer.protocol" {
 			v, err := strconv.Atoi(kv.Value)
 			if err != nil {
@@ -122,7 +176,7 @@ func (s *Stream) needEpoch() error {
 			}
 		}
 	}
-	for _, kv := range s.r.Meta {
+	for _, kv := range s.Meta() {
 		if kv.Key == "recording.epoch" {
 			e, err := strconv.ParseInt(kv.Value, 10, 64)
 			if err != nil {

@@ -408,7 +408,7 @@ Other streams a subscriber names (decoded DUT messages, supply measurements) com
 | `record` | a stream's name, its time `t` (§7.2), and the values of its fields |
 
 - The subscription opens with `meta`, then the `schema` of every stream it will carry, then a `hold` for every stream that has held fields and a value for them, so a subscriber that joins mid-run learns the present state.
-- A stream's `schema` comes before any `hold` or `record` of it. A `schema` MAY be sent again; it MUST then be identical. A `hold` MAY be sent again at any time; it restates and changes nothing.
+- A stream's `schema` comes before any `hold` or `record` of it. A `schema` MAY be sent again; it MUST then be identical. A `hold` MAY be sent again at any time; it restates and changes nothing. A later `meta` MAY add keys; a key already sent keeps the value it was first sent with.
 - A reader MUST ignore message kinds, metadata keys, schema metadata keys, streams and fields it does not know.
 
 ### 7.6 Fields and types
@@ -444,7 +444,7 @@ A field MAY be absent from a record (a Logb guarded field whose guard does not h
 | `enum` | `TypeUint` with a value-to-text conversion giving the labels |
 | held | the field's `Hold` flag |
 
-A Logb field with a numeric conversion (a DBC scale and offset) is, in the messages, a `float` holding the converted value; Logb also keeps the raw value, which the messages do not carry. A secondary MAY restate META, SCHEMA and HOLD frames at segment boundaries (§7.5).
+A Logb field with a numeric conversion (a DBC scale and offset) is, in the messages, a `float` holding the converted value; Logb also keeps the raw value, which the messages do not carry. A field under another text conversion (range to text) is its raw number. Complex fields and runs are not in the messages. A secondary MAY restate META, SCHEMA and HOLD frames at segment boundaries (§7.5).
 
 The streams of §7.4 have fixed layouts, so that every secondary's Logb is the same. All integers little-endian; offsets in bytes; `t` is bytes 0–7, signed.
 
@@ -469,7 +469,7 @@ A master SHOULD still read these streams by their schemas, and treat the layouts
 | `hold` | `{"hold": "<stream>", "t": "<t>", "v": {"<field>": <value>, …}}` |
 | `record` | `{"rec": "<stream>", "t": "<t>", "v": {"<field>": <value>, …}}` |
 
-A field in a schema is `{"name", "type", "bits"?, "max"?, "unit"?, "held"?, "labels"?, "desc"?, "meta"?}`: `type` is one of the names of §7.6; `bits` is the width of an integer or enum; `max` the length in bytes of a string or bytes field; `labels` an object from each code, in decimal, to its label. A field's values in `v`:
+A field in a schema is `{"name", "type", "bits"?, "max"?, "unit"?, "held"?, "labels"?, "guard"?, "desc"?, "meta"?}`: `type` is one of the names of §7.6; `bits` is the width of an integer or enum; `max` the length in bytes of a string or bytes field, absent for one of unbounded length; `labels` an object from each code, in decimal, to its label; `guard`, `{"field": "<name>", "value": n}`, says the field is present only in records where that other field holds the code `n` (a Logb guarded field). A reader that cannot hold a field of unbounded length MAY leave it out. A field's values in `v`:
 
 | Type | JSON value |
 |---|---|
@@ -634,7 +634,7 @@ The kit is held to this repository's implementations: `secondary.Server`, `ktest
 | §2 roles | as specified; tokens file holds `name role sha256` |
 | §6.2 `POST /dut/disarm` | implemented; also `POST /disarm` stops the whole rack |
 | §7.1 always sent | as specified |
-| §7.1 encodings | Logb only: `Accept` is not read, and `ktestd -peer` and `peer` read Logb only; NDJSON (§7.8) is not implemented |
+| §7.1 encodings | both: `ktestd -contract` and `secondary.Server` serve Logb or NDJSON by `Accept` (package `stream`, transcoding the Logb frames as they arrive); `ktestd -peer` and `peer` read either, `encoding=ndjson` in the `-peer` setting; Logb by default |
 | §8 clock sampling | every 1 s, N = 8 |
 | §9.4 rules | `limits.json` `rules`: `monitoring_lost`, `dut_abort`, `remove_stress` |
 | §9.6 recorded names | `<peer>.<stream>` with `peer_t` and `restated`; `<peer>.link`; `<peer>.clock`; `rules` |
@@ -653,6 +653,7 @@ The kit is held to this repository's implementations: `secondary.Server`, `ktest
 | `monitor` | a secondary: contract loader and evaluator (§3, §5); how actions are defined is a hook, `ActionCheck` | done |
 | `conformance` | checking either side from the outside; `cmd/peer-conformance` (§12) | done |
 | `secondary` | a secondary: `Core`, a DUT rack's behaviour under any control plane (`ktestd -contract` runs on it); `Server`, `Core` with a control plane, recording and HTTP of its own, over the host's streams and an `Actions` it runs (§5–§7, §10); `LoadTokens` and `SelfSigned`, as `ktestd` does them; the record layouts of §7.4 and the `/stream/sub` filter, which `ktestd -contract` shares | done |
+| `ndjson` | either side: the NDJSON encoding (§7.8); `Writer` and `Transcode` from Logb, `Reader` back to Logb schemas and records | done |
 | `procedure/lib` | a master's procedures: the DUT keywords over one rack (`AddDUT`) or several (`AddDUTs`, §9.7) | done |
 
 A program that is a DUT rack declares its streams with `record.Schema`, gives `secondary.New` the contract, its streams, an `Actions` and an `Auth` (`secondary.LoadTokens` reads `ktestd`'s tokens file), serves `Server.Handler` over TLS (`secondary.SelfSigned` makes a certificate), and writes its records with `Server.Write`. The server's reorder window (`Config.Window`, 20 ms by default) must exceed the longest the program takes between a record's time and writing it; a later record is a gap. `examples/library-rack` is one, in under 300 lines.
@@ -661,7 +662,7 @@ A program that is a DUT rack declares its streams with `record.Schema`, gives `s
 
 ## 15. Open points
 
-- NDJSON (§7.8) in this repository: an encoder beside `stream`'s Logb writer, an `Accept` switch in `secondary` and `ktestd -contract`, a decoder in `peer` giving the same `Event`s, and conformance checks for §7.8 and §7.9. `View`, `Guard`, `DUT` and the evaluator work on decoded events and would not change.
+- Conformance checks for NDJSON (§7.8) and for the equivalence of the two encodings (§7.9). The repository's own implementations are held to §7.9 by tests (`ndjson`, `peer`, `secondary`), not yet by `peer-conformance`.
 - Protocol 2: NDJSON required of every secondary, Logb optional, so that a rack or a master in any language needs only a JSON library. A master that records in Logb would still ask for Logb where it is served, and mirror it by copy.
 - `monitor-check` reads Logb recordings. Reading an NDJSON capture of a subscription to every input would let it replay a rack that does not record in Logb (§5.5, §10.2).
 - Monitors written as state machines rather than expressions, for devices that need one.
