@@ -1,6 +1,6 @@
 # Ktest peer protocol: two racks, one DUT
 
-Status: **draft, protocol version 1**, 2026-11-20. Normative.
+Status: **draft, protocol version 1**, 2026-11-23. Normative.
 
 This document specifies how a **master** test application drives a **secondary** that operates and observes a device under test (DUT). It is written so that either side can be something other than `ktestd`:
 
@@ -21,7 +21,7 @@ The key words MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are to be read as in RF
   │ daemon rules     │   actions, clock      │                             │
   │ (stress control) │                       │ monitors ◀── DUT inputs     │
   │ recording        │ ◀─ /stream/sub ────── │ watermark                   │
-  └──────────────────┘   Logb, per record    └─────────────────────────────┘
+  └──────────────────┘   Logb or NDJSON      └─────────────────────────────┘
           │                                                 │
      lab instruments                                       DUT
 ```
@@ -43,7 +43,8 @@ The key words MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are to be read as in RF
 | action | a named operation the secondary runs on the DUT on request |
 | watermark | a time T such that every monitor transition at or before T has been sent |
 | lease | the exclusive right to change the DUT's mode and run its actions |
-| record | one Logb record: a time and the fields of its stream's schema |
+| record | one message of the subscription stream: a stream, a time and the values of its fields (§7.5) |
+| encoding | how the stream's messages are written to the wire: Logb or NDJSON (§7.7, §7.8) |
 
 ### 1.2 Conformance classes
 
@@ -274,7 +275,7 @@ A command is answered **accepted** or **refused**, never with the resulting stat
 | `POST /dut/disarm` | view | — | — | `202` `{"seq"}` |
 | `PUT /dut/mode` | operate | yes, armed | `{"value": "<mode>" \| ""}` | `202` `{"seq"}` |
 | `POST /dut/actions/{name}` | operate | yes, armed | — | `202` `{"seq"}` |
-| `GET /stream/sub?ch=…` | view | — | — | `200`, a Logb stream (§7) |
+| `GET /stream/sub?ch=…` | view | — | — | `200`, the stream in the encoding `Accept` asks for (§7); `406` if not served |
 
 The lease token travels in the header `Ktest-Lease: <token>`.
 
@@ -310,82 +311,192 @@ The lease token travels in the header `Ktest-Lease: <token>`.
 
 ```
 GET /stream/sub?ch=mon.*,DutStatus
+Accept: application/x-ndjson
 ```
 
-### 7.1 Format
+The stream is defined as a sequence of **messages** (§7.2–§7.6), independently of how they are written to the wire. Everything a master relies on — times, states, held values, metadata — is in the messages. §7.7 and §7.8 define two **encodings** of them, Logb and NDJSON, and §7.9 says what makes the two equivalent.
 
-- A **Logb** stream (the `github.com/trukeio/logb` format), **uncompressed**, **one record per DATA frame**, each frame written and flushed the moment its record is recorded.
-- It opens with the stream metadata and the schemas and current held values of every stream it will carry, so a subscriber that joins mid-run learns the present state.
+### 7.1 Subscribing
+
 - `ch` is a comma-separated list of stream names or globs (`path.Match` syntax: `*`, `?`, `[…]`). A malformed glob is refused `400`.
 - Always sent, whatever `ch` says: `mon.watermark`, `mon.gap`, `mode`, `mode.*`, and the metadata.
+- The encoding is chosen by the request's `Accept` header:
+
+  | Media type | Encoding | Secondary |
+  |---|---|---|
+  | `application/vnd.logb` | Logb (§7.7) | MUST serve |
+  | `application/x-ndjson` | NDJSON (§7.8) | SHOULD serve |
+
+  The secondary answers in the encoding the `Accept` header prefers, by `q`, among those it serves; no `Accept`, or `*/*`, gets Logb. An `Accept` that lists only encodings the secondary does not serve is refused `406`. The answer's `Content-Type` names the encoding.
+- Each message is written and flushed the moment its record is recorded, one message per write. The subscription is never batched or compressed, whatever the secondary's recording does.
 - A subscriber that falls behind is disconnected. The secondary's own recording is not affected. A subscription never ends of its own accord; its end is a link loss (§9.3).
+
+A master MUST read at least one encoding. One that reads Logb works with every secondary; one that reads only NDJSON works only with secondaries that serve it, and MUST report a `406` as that, not as a link loss.
 
 ### 7.2 Time
 
-- Every stream has a time axis in nanoseconds (`AxisExp = -9`), field `t`, first in the record.
-- The metadata key `recording.epoch` is Unix nanoseconds. A record's time is `recording.epoch` + its axis value. A stream without `recording.epoch` MUST be refused by the master.
+- Every record's `t` is nanoseconds since the metadata's `recording.epoch`, a signed 64-bit integer.
+- `recording.epoch` is Unix nanoseconds. A record's time is `recording.epoch` + `t`. A stream without `recording.epoch` MUST be refused by the master.
 - Times are on the **secondary's clock**. The master converts them (§8).
 
 ### 7.3 Metadata
 
-The metadata MUST include `recording.epoch`, `peer.protocol` (§11) and the secondary's provenance: software name and version, host, contract name and hash. Its keys are the secondary's choice beyond `recording.epoch`; a master records them as it receives them.
+The metadata MUST include `recording.epoch`, `peer.protocol` (§11) and the secondary's provenance: software name and version, host, contract name and hash. Its keys are the secondary's choice beyond these; a master records them as it receives them. Every value is a string: `recording.epoch` is the decimal integer.
 
 ### 7.4 Streams
 
-All integers little-endian. Strings are fixed-width, UTF-8, NUL-padded. Offsets in bytes; `t` is bytes 0–7, signed.
+The streams every secondary carries, in the types of §7.6. Their layout in each encoding follows from these (§7.7, §7.8); a master MUST read them by schema, not by an assumed layout.
 
-**`mon.<name>`**, one per monitor, held:
+**`mon.<name>`**, one per monitor:
 
-| Field | Bytes | Type | Meaning |
-|---|---|---|---|
-| `state` | 8 | uint8, held | the state from this record on, code of §5.1 |
-| `from` | 9 | uint8 | the state before |
-| `cause` | 16–79 | string 64 | what caused it: a stream's sample, a deadline, a mode, a gap |
+| Field | Type | Meaning |
+|---|---|---|
+| `state` | enum (uint 8), held | the state from this record on; codes and labels of §5.1 |
+| `from` | enum (uint 8) | the state before |
+| `cause` | string 64 | what caused it: a stream's sample, a deadline, a mode, a gap |
 
 Schema metadata: `contract` (the contract hash).
 
-**`mon.watermark`**, held:
+**`mon.watermark`**:
 
-| Field | Bytes | Type | Meaning |
-|---|---|---|---|
-| `upto` | 8–15 | int64 ns, held | every transition at or before this Unix time has been sent |
+| Field | Type | Meaning |
+|---|---|---|
+| `upto` | sint 64, `ns`, held | every transition at or before this Unix time has been sent |
 
 **`mon.gap`**:
 
-| Field | Bytes | Type | Meaning |
-|---|---|---|---|
-| `from` | 8–15 | int64 ns | first record not used, Unix time |
-| `to` | 16–23 | int64 ns | last |
-| `lost` | 24–27 | uint32 | how many records |
-| `reason` | 32–127 | string 96 | `overflow…` or `late…` |
+| Field | Type | Meaning |
+|---|---|---|
+| `from` | sint 64, `ns` | first record not used, Unix time |
+| `to` | sint 64, `ns` | last |
+| `lost` | uint 32 | how many records |
+| `reason` | string 96 | `overflow…` or `late…` |
 
 **`mode`**:
 
-| Field | Bytes | Type | Meaning |
-|---|---|---|---|
-| `seq` | 8–11 | uint32 | the request; 0 for the start |
-| `event` | 12 | uint8 | 0 start, 1 requested, 2 applied, 3 failed |
-| `requested` | 16–47 | string 32, held | the mode last asked for |
-| `applied` | 48–79 | string 32, held | the mode the DUT is in |
-| `by` | 80–111 | string 32 | who asked |
-| `message` | 112–271 | string 160 | why the entry action failed |
+| Field | Type | Meaning |
+|---|---|---|
+| `seq` | uint 32 | the request; 0 for the start |
+| `event` | enum (uint 8) | 0 start, 1 requested, 2 applied, 3 failed |
+| `requested` | string 32, held | the mode last asked for |
+| `applied` | string 32, held | the mode the DUT is in |
+| `by` | string 32 | who asked |
+| `message` | string 160 | why the entry action failed |
 
 **`dut.action.<name>`**:
 
-| Field | Bytes | Type | Meaning |
-|---|---|---|---|
-| `seq` | 8–11 | uint32 | the request that started it |
-| `run` | 12–15 | uint32 | action run number since start |
-| `event` | 16 | uint8 | 1 started, 2 ended |
-| `outcome` | 17 | uint8 | at the end: 1 ok, 2 nok, 3 timeout, 4 refused, 5 link_lost, 6 fail, 7 stopped |
-| `via` | 18 | uint8 | 1 local socket, 2 TLS |
-| `by` | 24–55 | string 32 | who asked |
-| `mode` | 56–87 | string 32 | the mode this is the entry action of; empty if asked directly |
-| `message` | 88–247 | string 160 | at the end: why it failed |
+| Field | Type | Meaning |
+|---|---|---|
+| `seq` | uint 32 | the request that started it |
+| `run` | uint 32 | action run number since start |
+| `event` | enum (uint 8) | 1 started, 2 ended |
+| `outcome` | enum (uint 8) | at the end: 1 ok, 2 nok, 3 timeout, 4 refused, 5 link_lost, 6 fail, 7 stopped; 0 for none |
+| `via` | enum (uint 8) | 1 local socket, 2 TLS |
+| `by` | string 32 | who asked |
+| `mode` | string 32 | the mode this is the entry action of; empty if asked directly |
+| `message` | string 160 | at the end: why it failed |
 
-Other streams a subscriber names (decoded DUT messages, supply measurements) come with their own schemas; a master MUST read them by schema, not by assumed layout.
+Other streams a subscriber names (decoded DUT messages, supply measurements) come with their own schemas.
 
-A master SHOULD read every stream by its schema even for the ones above, and SHOULD treat the layouts in this section as what a secondary MUST declare, not as what a master may hard-code.
+### 7.5 Messages
+
+| Message | Carries |
+|---|---|
+| `meta` | the stream's metadata: string keys, string values (§7.3) |
+| `schema` | a stream's name, its fields (§7.6), and its own metadata: string keys, string values |
+| `hold` | a stream's held fields, the value each holds and the time `t` it took it |
+| `record` | a stream's name, its time `t` (§7.2), and the values of its fields |
+
+- The subscription opens with `meta`, then the `schema` of every stream it will carry, then a `hold` for every stream that has held fields and a value for them, so a subscriber that joins mid-run learns the present state.
+- A stream's `schema` comes before any `hold` or `record` of it. A `schema` MAY be sent again; it MUST then be identical. A `hold` MAY be sent again at any time; it restates and changes nothing.
+- A reader MUST ignore message kinds, metadata keys, schema metadata keys, streams and fields it does not know.
+
+### 7.6 Fields and types
+
+Each field of a schema has a **name**, a **type**, and optionally a **unit**, a **description**, the flag **held** (its value stands until the next record of its stream) and, for `enum`, **labels**. The time `t` is not a field; every record has it.
+
+| Type | Values | Notes |
+|---|---|---|
+| `uint`, `sint` | integers of a declared width, at most 64 bits | a time is an `sint` of 64 bits with unit `ns` |
+| `float` | IEEE 754 binary64 | NaN or an infinity reads as undefined (§4) |
+| `bool` | true, false | |
+| `string` | UTF-8, at most a declared number of bytes | a longer value is cut at a character boundary, the same way in every encoding |
+| `bytes` | octets, at most a declared number | not used by the streams of §7.4 |
+| `enum` | an unsigned code and the label of each code it may take | a code without a label is valid; it has no name |
+
+A field MAY be absent from a record (a Logb guarded field whose guard does not hold). Absent is not zero.
+
+### 7.7 Logb encoding
+
+`application/vnd.logb`: a stream in the `github.com/trukeio/logb` format, uncompressed.
+
+| Message | Logb |
+|---|---|
+| `meta` | META frame |
+| `schema` | SCHEMA frame; the time axis is field `t`, first, in nanoseconds (`AxisExp = -9`) |
+| `hold` | HOLD frame |
+| `record` | DATA frame, one record per frame |
+
+| Type | Logb field |
+|---|---|
+| `uint`, `sint`, `float`, `bool` | `TypeUint`, `TypeSint`, `TypeFloat`, `TypeBool`, of the declared width |
+| `string`, `bytes` | `TypeString`, `TypeBytes`, fixed width, NUL-padded |
+| `enum` | `TypeUint` with a value-to-text conversion giving the labels |
+| held | the field's `Hold` flag |
+
+A Logb field with a numeric conversion (a DBC scale and offset) is, in the messages, a `float` holding the converted value; Logb also keeps the raw value, which the messages do not carry. A secondary MAY restate META, SCHEMA and HOLD frames at segment boundaries (§7.5).
+
+The streams of §7.4 have fixed layouts, so that every secondary's Logb is the same. All integers little-endian; offsets in bytes; `t` is bytes 0–7, signed.
+
+| Stream | Layout |
+|---|---|
+| `mon.<name>` | `state` 8, `from` 9, `cause` 16–79 |
+| `mon.watermark` | `upto` 8–15 |
+| `mon.gap` | `from` 8–15, `to` 16–23, `lost` 24–27, `reason` 32–127 |
+| `mode` | `seq` 8–11, `event` 12, `requested` 16–47, `applied` 48–79, `by` 80–111, `message` 112–271 |
+| `dut.action.<name>` | `seq` 8–11, `run` 12–15, `event` 16, `outcome` 17, `via` 18, `by` 24–55, `mode` 56–87, `message` 88–247 |
+
+A master SHOULD still read these streams by their schemas, and treat the layouts as what a secondary MUST declare, not as what a master may hard-code.
+
+### 7.8 NDJSON encoding
+
+`application/x-ndjson`: one JSON object per message, UTF-8, each on one line ended by LF. What kind of message an object is follows from the key it has:
+
+| Message | Object |
+|---|---|
+| `meta` | `{"meta": {"<key>": "<value>", …}}` |
+| `schema` | `{"schema": "<stream>", "fields": [<field>, …], "meta": {…}}` |
+| `hold` | `{"hold": "<stream>", "t": "<t>", "v": {"<field>": <value>, …}}` |
+| `record` | `{"rec": "<stream>", "t": "<t>", "v": {"<field>": <value>, …}}` |
+
+A field in a schema is `{"name", "type", "bits"?, "max"?, "unit"?, "held"?, "labels"?, "desc"?, "meta"?}`: `type` is one of the names of §7.6; `bits` is the width of an integer or enum; `max` the length in bytes of a string or bytes field; `labels` an object from each code, in decimal, to its label. A field's values in `v`:
+
+| Type | JSON value |
+|---|---|
+| `uint`, `sint` of up to 53 bits | a number |
+| `uint`, `sint` wider than 53 bits | a string holding the decimal integer; `t` is one |
+| `float` | a number written so that it reads back to the same binary64; NaN and infinities as `null` |
+| `bool` | `true` or `false` |
+| `string` | a string, at most `max` bytes in UTF-8, no NUL padding |
+| `bytes` | a string, base64 (RFC 4648 §4) |
+| `enum` | its label as a string; a code without a label as a number |
+
+An absent field is left out of `v`. JSON readers commonly hold every number as a binary64, which is exact only to 2⁵³; the string rule keeps nanosecond times and 64-bit counters exact.
+
+```
+{"meta":{"recording.epoch":"1795172700000000000","peer.protocol":"1","contract":"acme-bcm-v3"}}
+{"schema":"mon.alive","fields":[{"name":"state","type":"enum","bits":8,"held":true,"labels":{"0":"ok","1":"dev","2":"unknown","3":"inactive","4":"settling"}},{"name":"from","type":"enum","bits":8,"labels":{"0":"ok","1":"dev","2":"unknown","3":"inactive","4":"settling"}},{"name":"cause","type":"string","max":64}],"meta":{"contract":"9f2c…"}}
+{"schema":"mon.watermark","fields":[{"name":"upto","type":"sint","bits":64,"unit":"ns","held":true}]}
+{"hold":"mon.alive","t":"11870000000","v":{"state":"ok"}}
+{"rec":"mon.alive","t":"12345678901","v":{"state":"dev","from":"ok","cause":"DutStatus.counter: delta 2"}}
+{"rec":"mon.watermark","t":"12355000000","v":{"upto":"1795172712355000000"}}
+```
+
+### 7.9 Equivalence
+
+- A secondary that serves both encodings MUST carry the same messages in each: the same metadata, schemas, holds and records, value for value and to the nanosecond. Only the order of messages of different streams within one instant MAY differ.
+- Decoding either encoding and writing the result in the other MUST give back the same messages. This is what lets a master record the stream in whatever format it records in (§9.6), and what a conformance check of the two encodings would hold a secondary to (§12; not yet in the kit).
+- The secondary's own recording (§10.2) is in a format of its choosing; neither encoding has to be it.
 
 ## 8. Clocks
 
@@ -485,7 +596,8 @@ The figure is bounded below by the reorder window (§5.6): a secondary that stam
 
 - The **contract schema** is `"schema": 1` (§3).
 - The **protocol version** is 1. A secondary MUST state it in the `GET /dut/contract` answer as `"protocol": 1`, and in the subscription stream's metadata as `peer.protocol` = `1`. A master MUST refuse a secondary that states a version it does not implement, in either place. A secondary that states none is version 1.
-- A new version is needed for any change that would make an existing conforming master or secondary misread the other. Adding an optional request key, an answer key, a stream or a metadata key does not need one: a reader ignores keys and streams it does not know.
+- A new version is needed for any change that would make an existing conforming master or secondary misread the other. Adding an optional request key, an answer key, a stream, a metadata key or an optional encoding does not need one: a reader ignores keys and streams it does not know, and asks for the encodings it reads.
+- NDJSON (§7.8) is an optional encoding of version 1; Logb stays the one every secondary serves. Making NDJSON the required encoding and Logb optional would leave a Logb-only master unable to read some secondaries, so it needs protocol 2 (§15).
 
 ## 12. Conformance
 
@@ -498,7 +610,7 @@ peer-conformance secondary -url https://host:port -cacert rack.pem -contract dut
     -token operate.token [-other operate2.token] [-view view.token] [-mode m] [-action a]
 ```
 
-It acts as a master and checks §2 (tokens and roles), §3.3 (hashes), §5.1 and §5.6 (state codes, the watermark's order and cadence), §6 (every endpoint, every refusal and its status and number, the lease, arming, a mode entered and left, an action run and a second refused while it runs, each with its records under its number, and a lease that runs out stopping nothing), §7 (the stream's format, metadata and the layouts of §7.4) and §11. It measures §10.4's latency through the clocks' offset and reports it, without judging it. It takes the lease, arms, changes the mode and disarms: run it on a bench, never during a test. `-action` runs an action on the DUT, twice; without it, none is run. Give one that takes some time, such as a reset, or the busy check is skipped.
+It acts as a master and checks §2 (tokens and roles), §3.3 (hashes), §5.1 and §5.6 (state codes, the watermark's order and cadence), §6 (every endpoint, every refusal and its status and number, the lease, arming, a mode entered and left, an action run and a second refused while it runs, each with its records under its number, and a lease that runs out stopping nothing), §7 (the stream's Logb encoding, its metadata and the streams of §7.4 with their layouts of §7.7) and §11. It does not yet check the NDJSON encoding (§7.8) or the equivalence of the two (§7.9). It measures §10.4's latency through the clocks' offset and reports it, without judging it. It takes the lease, arms, changes the mode and disarms: run it on a bench, never during a test. `-action` runs an action on the DUT, twice; without it, none is run. Give one that takes some time, such as a reset, or the busy check is skipped.
 
 The monitors' semantics (§5) are checked on the secondary's recording: `monitor-check -live dut-interface.json recording.logb` replays it through the reference evaluator, which must give every transition the secondary recorded live, to the nanosecond, up to the first record a gap lost. Gaps themselves (§5.7) cannot be provoked from outside a rack; they are covered by the reference evaluator's own tests, and by `monitor-check` on any recording that has one.
 
@@ -522,6 +634,7 @@ The kit is held to this repository's implementations: `secondary.Server`, `ktest
 | §2 roles | as specified; tokens file holds `name role sha256` |
 | §6.2 `POST /dut/disarm` | implemented; also `POST /disarm` stops the whole rack |
 | §7.1 always sent | as specified |
+| §7.1 encodings | Logb only: `Accept` is not read, and `ktestd -peer` and `peer` read Logb only; NDJSON (§7.8) is not implemented |
 | §8 clock sampling | every 1 s, N = 8 |
 | §9.4 rules | `limits.json` `rules`: `monitoring_lost`, `dut_abort`, `remove_stress` |
 | §9.6 recorded names | `<peer>.<stream>` with `peer_t` and `restated`; `<peer>.link`; `<peer>.clock`; `rules` |
@@ -548,7 +661,9 @@ A program that is a DUT rack declares its streams with `record.Schema`, gives `s
 
 ## 15. Open points
 
-- An NDJSON rendering of `/stream/sub`, for masters without a Logb decoder. Logb has readers in Go and Python.
+- NDJSON (§7.8) in this repository: an encoder beside `stream`'s Logb writer, an `Accept` switch in `secondary` and `ktestd -contract`, a decoder in `peer` giving the same `Event`s, and conformance checks for §7.8 and §7.9. `View`, `Guard`, `DUT` and the evaluator work on decoded events and would not change.
+- Protocol 2: NDJSON required of every secondary, Logb optional, so that a rack or a master in any language needs only a JSON library. A master that records in Logb would still ask for Logb where it is served, and mirror it by copy.
+- `monitor-check` reads Logb recordings. Reading an NDJSON capture of a subscription to every input would let it replay a rack that does not record in Logb (§5.5, §10.2).
 - Monitors written as state machines rather than expressions, for devices that need one.
 - When several inputs go stale at one instant, a transition's `cause` names the first only. States and times are right.
 - One DUT rack with several DUTs, each with its own contract. Today a rack runs one contract; several DUTs need several racks (§9.7), which may share a machine.
